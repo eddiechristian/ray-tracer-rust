@@ -114,7 +114,7 @@ impl Scene {
                         // Light contributions add up; lights that don't reach this point return None.
                         let intensity: f64 = self.lights
                             .iter()
-                            .filter_map(|light| light.compute_illumination(&intersection))
+                            .filter_map(|light| light.compute_illumination(&intersection, &self.objects))
                             .map(|illumination| illumination.intensity)
                             .sum();
 

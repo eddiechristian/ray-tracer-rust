@@ -1,4 +1,4 @@
-use crate::object_base::IntersectionResult;
+use crate::object_base::{Intersect, IntersectionResult};
 
 
 	#[derive(Clone, Copy, Debug, Default)] 
@@ -7,5 +7,6 @@ pub struct IlluminationResult {
 }
 
 pub trait Illuminate {
-    fn compute_illumination(&self, intersection_result: &IntersectionResult) -> Option<IlluminationResult>;
+    /// `objects` is the whole scene, so lights can check whether anything casts a shadow.
+    fn compute_illumination(&self, intersection_result: &IntersectionResult, objects: &[Box<dyn Intersect>]) -> Option<IlluminationResult>;
 }
