@@ -3,6 +3,8 @@ mod ray;
 mod object_base;
 mod sphere;
 mod scene;
+mod point_light;
+mod light_base;
 
 use std::time::Instant;
 

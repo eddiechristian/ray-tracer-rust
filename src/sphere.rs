@@ -1,4 +1,4 @@
-use crate::ray::Ray;
+use crate::ray::{Color, Ray};
 use crate::object_base::Intersect;
 use crate::object_base::IntersectionResult;
 use nalgebra::{Isometry3, Point3, Translation3, UnitQuaternion, Vector3};
@@ -9,13 +9,15 @@ use nalgebra::{Isometry3, Point3, Translation3, UnitQuaternion, Vector3};
 pub struct Sphere {
     pub transform: Isometry3<f64>,
     pub scale: f64,
+    pub color: Color,
 }
 
 impl Sphere {
-    pub fn new(translation: Vector3<f64>, scale: f64) -> Self {
+    pub fn new(translation: Vector3<f64>, scale: f64, color: Color) -> Self {
         Sphere {
             transform: Isometry3::from_parts(Translation3::from(translation), UnitQuaternion::identity()),
             scale,
+            color,
         }
     }
 
@@ -62,6 +64,7 @@ impl Intersect for Sphere {
         Some(IntersectionResult {
             intersection,
             local_normal,
+            color: self.color,
         })
     }
 }
