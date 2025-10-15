@@ -33,8 +33,9 @@ The renderer is single-threaded. It re-traces the whole image every frame. That'
 | 4–6. Bounding-box culling, fast shadow test, deferred hit details | done | 138.5 ms (7.2 FPS) | 1.6x, output byte-identical. Done together through `ObjectList` and `Intersect::hit_distance`. |
 | 7. Fewer secondary rays | done | 116 ms (8.6 FPS) | 1.2x. Rays contributing < 1/255 are not traced. 1.6% of pixels changed, by at most 2/255. `MAX_DEPTH` was left at 5, since the weight cutoff already ends opaque chains after 3–4 bounces. |
 | 8. Precomputed transform matrices | done | ~108 ms (9.2 FPS) | ~1.07x. Setters keep the matrices in sync; `ObjectList::refresh_bounds` handles moved objects. 74 pixels changed, almost all exactly on checker-square boundaries (rounding). |
+| 9. Faster bounding-box test | done | 62 ms (16.1 FPS) | 1.74x, byte-identical. Found by profiling: the box test was 61% of all instructions (6 divisions per box, plus slow `f64::min`/`max`). Now it divides once per ray and uses plain comparisons. |
 
-Overall: 1,200 ms → ~108 ms, ~11x.
+Overall: 1,200 ms → 62 ms, 19.4x.
 
 ## Steps, in recommended order
 
@@ -125,6 +126,28 @@ There are about 915k reflection/refraction rays per frame, roughly one per pixel
 - For normals, precompute the inverse-transpose matrix.
 
 **Gain:** about 1.1–1.2x. **Effort:** small–medium.
+
+### Profile before choosing the next step
+
+The plan's estimates missed the real bottleneck: the bounding-box test, fixed in step 9. Profile before each new step:
+
+```bash
+# Release build with debug symbols, in a separate folder so the normal build isn't disturbed
+CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --target-dir /tmp/rt-prof
+# One frame on one thread, counting the instructions executed in every function
+RAYON_NUM_THREADS=1 valgrind --tool=callgrind --callgrind-out-file=/tmp/rt.callgrind \
+    /tmp/rt-prof/release/ray-tracer-rust --bench 1
+callgrind_annotate --inclusive=no  /tmp/rt.callgrind | head -40   # work done in each function itself
+callgrind_annotate --inclusive=yes /tmp/rt.callgrind | head -60   # work including everything it calls
+```
+
+Callgrind runs about 50x slower than normal (~1 minute for one frame) and counts instructions, not time. A division and a multiply each count as one instruction, but the division is much slower, so read the numbers as "where the work is", not exact time.
+
+After step 9, the profile suggests these next candidates (see `performanceImprovements.md`):
+- Fewer box tests per ray: grouping or a BVH.
+- A shadow-ray "last blocker" cache.
+- Skipping the box test for the floor.
+- Avoiding `atan2`/`acos` where they aren't needed.
 
 ### Later / only if needed
 

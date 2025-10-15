@@ -1,5 +1,5 @@
 use nalgebra::{Vector2, Vector3};
-use crate::aabb::Aabb;
+use crate::aabb::{inverse_direction, Aabb};
 use crate::material::Material;
 use crate::ray::Ray;
 use crate::transform::Transform;
@@ -102,10 +102,11 @@ impl ObjectList {
         debug_assert!(!self.bounds_stale, "objects moved: call ObjectList::refresh_bounds() before rendering");
         // Unit-length direction, so box entry and hit distances are in the same units.
         let ray = Ray::new(ray.point1, ray.point1 + ray.lab.normalize());
+        let inv_dir = inverse_direction(&ray.lab); // once per ray, shared by every box test
         let mut nearest = None;
         let mut nearest_dist = max_dist;
         for (i, (object, bounds)) in self.objects.iter().zip(&self.bounds).enumerate() {
-            match bounds.entry_distance(&ray) {
+            match bounds.entry_distance_inv(&ray.point1, &inv_dir) {
                 Some(entry) if entry < nearest_dist => {}
                 _ => continue, // Missed the box, or it starts beyond the nearest hit so far.
             }
@@ -131,8 +132,9 @@ impl ObjectList {
     pub fn occluded(&self, ray: &Ray, max_dist: f64) -> bool {
         debug_assert!(!self.bounds_stale, "objects moved: call ObjectList::refresh_bounds() before rendering");
         let ray = Ray::new(ray.point1, ray.point1 + ray.lab.normalize());
+        let inv_dir = inverse_direction(&ray.lab);
         self.objects.iter().zip(&self.bounds).any(|(object, bounds)| {
-            bounds.entry_distance(&ray).is_some_and(|entry| entry < max_dist)
+            bounds.entry_distance_inv(&ray.point1, &inv_dir).is_some_and(|entry| entry < max_dist)
                 && object.hit_distance(&ray, max_dist).is_some()
         })
     }

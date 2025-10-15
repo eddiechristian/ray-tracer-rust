@@ -58,22 +58,76 @@ impl Aabb {
     /// If the ray passes through the box, how far along it the box starts (0.0 if the ray
     /// starts inside), in units of `ray.lab`'s length; pass a unit-length `lab` for distances.
     pub fn entry_distance(&self, ray: &Ray) -> Option<f64> {
-        // Slab method, as in Cuboid::test_intersection.
-        let mut t_near = f64::NEG_INFINITY;
+        self.entry_distance_inv(&ray.point1, &inverse_direction(&ray.lab))
+    }
+
+    /// `entry_distance` for a ray given as origin and `inverse_direction(lab)`. This is the hot
+    /// path: callers testing many boxes against one ray compute the inverse once, so each box
+    /// costs multiplies and comparisons instead of six divisions.
+    #[inline]
+    pub fn entry_distance_inv(&self, origin: &Vector3<f64>, inv_dir: &Vector3<f64>) -> Option<f64> {
+        // Slab method, as in Cuboid::test_intersection. Starting t_near at 0 ignores the part
+        // of the ray behind its origin. Plain comparisons are used instead of f64::min/max,
+        // which are slower because of their NaN handling.
+        //
+        // A direction component of 0 gives an infinite inverse, so that axis's t values are
+        // ±infinity: the slab then either covers the whole ray or none of it, as it should.
+        // (If the origin lies exactly on a padded face, 0 * infinity is NaN; every comparison
+        // with NaN is false, so that axis is ignored: at worst an object is tested needlessly,
+        // never skipped wrongly.)
+        let mut t_near = 0.0_f64;
         let mut t_far = f64::INFINITY;
         for i in 0..3 {
-            let (lo, hi) = (self.min[i] - PADDING, self.max[i] + PADDING);
-            if ray.lab[i] == 0.0 {
-                if ray.point1[i] < lo || ray.point1[i] > hi {
-                    return None;
-                }
-            } else {
-                let t1 = (lo - ray.point1[i]) / ray.lab[i];
-                let t2 = (hi - ray.point1[i]) / ray.lab[i];
-                t_near = t_near.max(t1.min(t2));
-                t_far = t_far.min(t1.max(t2));
+            let t1 = (self.min[i] - PADDING - origin[i]) * inv_dir[i];
+            let t2 = (self.max[i] + PADDING - origin[i]) * inv_dir[i];
+            let (lo, hi) = if t1 < t2 { (t1, t2) } else { (t2, t1) };
+            if lo > t_near {
+                t_near = lo;
+            }
+            if hi < t_far {
+                t_far = hi;
             }
         }
-        (t_near <= t_far && t_far >= 0.0).then_some(t_near.max(0.0))
+        if t_near <= t_far { Some(t_near) } else { None }
+    }
+}
+
+/// Component-wise 1 / direction, for `Aabb::entry_distance_inv`.
+pub fn inverse_direction(dir: &Vector3<f64>) -> Vector3<f64> {
+    dir.map(|d| 1.0 / d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unit_box() -> Aabb {
+        Aabb::new(Vector3::repeat(-1.0), Vector3::repeat(1.0))
+    }
+
+    fn ray(origin: [f64; 3], dir: [f64; 3]) -> Ray {
+        let o = Vector3::from(origin);
+        Ray::new(o, o + Vector3::from(dir))
+    }
+
+    #[test]
+    fn entry_distance_cases() {
+        let b = unit_box();
+        // Straight at the box from 5 away: enters at distance 4 (minus padding).
+        let d = b.entry_distance(&ray([0.0, -5.0, 0.0], [0.0, 1.0, 0.0])).unwrap();
+        assert!((d - 4.0).abs() < 1e-5);
+        // Starting inside: 0.
+        assert_eq!(b.entry_distance(&ray([0.0, 0.0, 0.0], [0.3, 0.4, 0.5])), Some(0.0));
+        // Box behind the ray.
+        assert_eq!(b.entry_distance(&ray([0.0, 5.0, 0.0], [0.0, 1.0, 0.0])), None);
+        // Parallel to an axis (zero direction components) and outside the slab: miss.
+        assert_eq!(b.entry_distance(&ray([0.0, -5.0, 2.0], [0.0, 1.0, 0.0])), None);
+        // Parallel to an axis and inside the slab: hit.
+        assert!(b.entry_distance(&ray([0.5, -5.0, 0.5], [0.0, 1.0, 0.0])).is_some());
+        // Diagonal miss past a corner.
+        assert_eq!(b.entry_distance(&ray([3.0, -5.0, 0.0], [0.0, 1.0, 0.0])), None);
+        // Flat box (a plane's bounds), hit edge-on from above.
+        let flat = Aabb::new(Vector3::new(-1.0, -1.0, 0.0), Vector3::new(1.0, 1.0, 0.0));
+        assert!(flat.entry_distance(&ray([0.2, 0.3, 5.0], [0.0, 0.0, -1.0])).is_some());
     }
 }

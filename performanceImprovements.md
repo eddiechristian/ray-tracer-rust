@@ -16,7 +16,8 @@ All timings come from `cargo run --release -- --bench 10`: the mean of 10 off-sc
 | 4–6. Bounding-box culling, fast shadow test, deferred hit details | 138.5 ms | 7.2 | 1.6x | identical |
 | 7. Fewer secondary rays | 116 ms | 8.6 | 1.2x | 1.6% of pixels changed by ≤ 2/255 |
 | 8. Precomputed transform matrices | ~108 ms | 9.2 | ~1.07x | 74 pixels flipped on checker-square boundaries |
-| **Total** | **1,200 → ~108 ms** | **0.83 → 9.2** | **~11x** | |
+| 9. Faster bounding-box test (found by profiling) | 62 ms | 16.1 | 1.74x | identical |
+| **Total** | **1,200 → 62 ms** | **0.83 → 16.1** | **19.4x** | |
 
 After each step, the image was compared byte for byte against a reference frame rendered before the changes.
 
@@ -133,7 +134,55 @@ Moving the camera needs none of this, because the matrices belong to the objects
 
 **Result:** 116 ms → ~108 ms (107–111 ms over runs), ~1.07x. 74 pixels changed: 71 of them lie exactly on the boundary between two floor checker squares, where a last-digit rounding difference picks the other square's color. Visually identical.
 
+## Step 9: faster bounding-box test (found by profiling)
+
+**How it was found:** `perf` isn't installed on this machine, so the renderer was profiled with valgrind's callgrind (see "How to profile" below). The step 4 bounding-box test, which exists to save work, had become the single biggest cost:
+
+| Function | Share of all instructions in a frame |
+|---|---|
+| `Aabb::entry_distance` (the box test) | **61%** |
+| ↳ of which `f64::min` / `f64::max` | 27% |
+| All shape intersection maths combined | under 10% |
+
+Every ray tests up to 16 boxes, and each test did 6 divisions, so about 96 divisions per ray. Division is one of the slowest CPU instructions. `f64::min`/`max` are also slower than a plain comparison, because of their NaN handling.
+
+**Changes:**
+- **Divide once per ray:** new `aabb::inverse_direction(dir)` computes `1 / direction` once per ray. The new `Aabb::entry_distance_inv(origin, inv_dir)` then uses only multiplies and plain `<` comparisons. `ObjectList::nearest` and `ObjectList::occluded` compute the inverse once and share it across all their box tests.
+- **Simpler slab test:** `t_near` starts at 0, which also removes the separate "is the box behind the ray?" check.
+- **Zero direction components:** these become infinite inverses, which the slab test handles naturally. The one edge case (an origin exactly on a padded face) can only cause an extra shape test, never a wrongly skipped object.
+- **`entry_distance(ray)` kept** as a convenience wrapper. The composite's own box check still uses it.
+- **New unit test** for the box test: hit, starting inside, box behind the ray, axis-parallel rays inside and outside a slab, a corner miss, and a flat box.
+
+**Result:** 108 ms → 62 ms, 1.74x. Output byte-identical. Instructions per frame went from 7.04 billion to 4.50 billion.
+
+**Profile afterwards (where the remaining time is):**
+
+| What | Share of instructions |
+|---|---|
+| Box tests (now inlined into `ObjectList::nearest` and the shadow test) | ~42%: cheap per test, but every ray tests all 16 boxes |
+| Shadow rays (`PointLight::compute_illumination`, total) | ~24% |
+| `atan2` (texture UVs) + `acos` (point-light angle) | ~5% |
+| Shape intersection maths | ~10% |
+
+## How to profile
+
+```bash
+# Release build with debug symbols, in a separate folder so the normal build isn't disturbed
+CARGO_PROFILE_RELEASE_DEBUG=true cargo build --release --target-dir /tmp/rt-prof
+# One frame on one thread, counting the instructions executed in every function
+RAYON_NUM_THREADS=1 valgrind --tool=callgrind --callgrind-out-file=/tmp/rt.callgrind \
+    /tmp/rt-prof/release/ray-tracer-rust --bench 1
+callgrind_annotate --inclusive=no  /tmp/rt.callgrind | head -40   # work done in each function itself
+callgrind_annotate --inclusive=yes /tmp/rt.callgrind | head -60   # work including everything it calls
+```
+
+Callgrind runs about 50x slower than normal (~1 minute for one frame) and counts instructions, not time. A division and a multiply each count as one instruction, but the division is much slower, so read the numbers as "where the work is", not exact time.
+
 ## Not done yet
 
 See `plan.md`:
-- **Profiling:** `cargo flamegraph --release -- --bench 20` would show where the remaining ~108 ms goes before choosing what to do next. The plan estimated 50–80 ms, so there is likely more to gain.
+Ideas suggested by the profile after step 9, not yet measured:
+- **Fewer box tests per ray:** group objects into composites, or build a small BVH (a tree of bounding boxes), so a ray skips whole groups. For example, the floating row and the floor row could each be one group.
+- **Shadow rays:** test the object that blocked the previous shadow ray first. Neighbouring pixels usually have the same blocker.
+- **The floor plane:** almost every ray hits its box, so for it the box test is pure overhead.
+- **Maths library calls:** compute UVs (`atan2`) only when the material's texture needs them, and avoid `acos` in the point-light intensity.
