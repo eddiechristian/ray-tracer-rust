@@ -1,6 +1,7 @@
 use crate::vec3::Vec3;
 use crate::vec3::DEFAULT_POS;
 use crate::vec3::VEC3_ZERO;
+use crate::ray::Ray;
 
 pub struct Camera {
     pub position: Vec3,
@@ -15,9 +16,9 @@ pub struct Camera {
     pub proj_screen_center: Vec3,
 }
 
-pub const DEFAULT_HORIZ_SZ: f64 = 1.0;
+pub const DEFAULT_HORIZ_SZ: f64 = 0.25;
 pub const DEFAULT_CAMERA_LEN: f64 = 1.0;
-pub const DEFAULT_ASPECT_RATIO: f64 = 1.0;
+pub const DEFAULT_ASPECT_RATIO: f64 = 1280.0/ 720.0;
 
 impl Default for Camera {
     fn default() -> Self {
@@ -41,8 +42,38 @@ impl Default for Camera {
     }
 }
 
+
+// bool qbRT::Camera::GenerateRay(float proScreenX, float proScreenY, qbRT::Ray &cameraRay)
+// {
+// 	// Compute the location of the screen point in world coordinates.
+// 	qbVector<double> screenWorldPart1 = m_projectionScreenCentre + (m_projectionScreenU * proScreenX);
+// 	qbVector<double> screenWorldCoordinate = screenWorldPart1 + (m_projectionScreenV * proScreenY);
+// 	
+// 	// Use this point along with the camera position to compute the ray.
+// 	cameraRay.m_point1 = m_cameraPosition;
+// 	cameraRay.m_point2 = screenWorldCoordinate;
+// 	cameraRay.m_lab = screenWorldCoordinate - m_cameraPosition;
+// 	
+// 	return true;
+// }
+
 impl Camera {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
+    }
+    pub fn generate_ray(&self, proj_screen_x: f64, proj_screen_y: f64)->Ray
+    {
+        let screen_world_part1 = self.proj_screen_center + (self.proj_screen_u * proj_screen_x);
+        let screen_world_coordinate = screen_world_part1 + (self.proj_screen_v * proj_screen_y);
+        
+        // Compute the line of sight vector (lab)
+        let lab = screen_world_coordinate - self.position;
+
+        // Construct and return the new Ray using your fields
+        Ray {
+            point1: self.position,
+            point2: screen_world_coordinate,
+            lab,
+        }
     }
 }

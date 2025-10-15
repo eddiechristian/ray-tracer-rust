@@ -1,6 +1,9 @@
 mod camera;
 mod ray;
 mod vec3;
+mod object_base;
+mod sphere;
+mod scene;
 
 use pixels::{Pixels, SurfaceTexture};
 use winit::{
@@ -10,8 +13,8 @@ use winit::{
     window::WindowBuilder,
 };
 
-const WIDTH: u32 = 800;
-const HEIGHT: u32 = 600;
+const WIDTH: u32 = 1280;
+const HEIGHT: u32 = 720;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new()?;
@@ -26,6 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Pixels::new(WIDTH, HEIGHT, surface_texture)?
     };
 
+    let scene = scene::Scene::new();
+
     event_loop.run(move |event, elwt| {
         match event {
             Event::WindowEvent {
@@ -34,22 +39,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => elwt.exit(),
             Event::AboutToWait => {
                 // 1. Get a mutable slice of your entire screen buffer
-                let frame = pixels.frame_mut();
+                let frame: &mut [u8] = pixels.frame_mut();
 
-                // 2. Sample pixel math (coloring coordinate x:100, y:134)
-                let x = 100;
-                let y = 134;
-                let color = (223, 234, 56); // RGB
-
-                // Formula to find the 1D index in an RGBA buffer
-                let pixel_index = ((y * WIDTH as usize) + x) * 4;
-
-                if pixel_index + 3 < frame.len() {
-                    frame[pixel_index] = color.0; // R
-                    frame[pixel_index + 1] = color.1; // G
-                    frame[pixel_index + 2] = color.2; // B
-                    frame[pixel_index + 3] = 255; // A
-                }
+                // 2. Ray trace the scene into the buffer
+                scene.render(frame);
 
                 // 3. Render the frame to the window
                 if let Err(err) = pixels.render() {

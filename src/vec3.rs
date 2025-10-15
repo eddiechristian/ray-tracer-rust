@@ -13,7 +13,7 @@ pub const VEC3_ZERO: Vec3 = Vec3 {
     z: 0.0,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Vec3 {
     pub x: f64,
     pub y: f64,
@@ -122,4 +122,8 @@ impl Mul<&Vec3> for f64 {
             z: self * vector.z,
         }
     }
+}
+
+pub fn dot(v1: &Vec3, v2: &Vec3) -> f64 {
+    (v1.x * v2.x) + (v1.y * v2.y) + (v1.z * v2.z)
 }
