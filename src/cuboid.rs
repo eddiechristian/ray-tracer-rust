@@ -15,12 +15,9 @@ impl Cuboid {
     pub fn new(transform: Transform, material: Material) -> Self {
         Cuboid { transform, material }
     }
-}
 
-impl Intersect for Cuboid {
-    fn test_intersection(&self, ray: &Ray) -> Option<IntersectionResult<'_>> {
-        let (p, v) = self.transform.ray_to_local(ray);
-
+    /// Local-space distance t along unit direction `v` from `p` to the nearest hit.
+    fn local_hit(p: &Vector3<f64>, v: &Vector3<f64>) -> Option<f64> {
         // Slab method: intersect the ray's t-ranges inside each pair of parallel faces.
         let mut t_near = f64::NEG_INFINITY;
         let mut t_far = f64::INFINITY;
@@ -41,7 +38,14 @@ impl Intersect for Cuboid {
             return None;
         }
         // Entry point, or exit point if the ray starts inside the box.
-        let t = if t_near > EPSILON { t_near } else { t_far };
+        Some(if t_near > EPSILON { t_near } else { t_far })
+    }
+}
+
+impl Intersect for Cuboid {
+    fn test_intersection(&self, ray: &Ray) -> Option<IntersectionResult<'_>> {
+        let (p, v) = self.transform.ray_to_local(ray);
+        let t = Self::local_hit(&p, &v)?;
         let local_point = p + v * t;
 
         // The face hit is the axis where the point is furthest from the centre.
@@ -64,7 +68,21 @@ impl Intersect for Cuboid {
         })
     }
 
+    fn hit_distance(&self, ray: &Ray, max_dist: f64) -> Option<f64> {
+        let (p, v) = self.transform.ray_to_local(ray);
+        let dist = self.transform.distance_to_world(&v, Self::local_hit(&p, &v)?);
+        (dist < max_dist).then_some(dist)
+    }
+
     fn bounds(&self) -> Aabb {
         self.transform.bounds_to_world(&Aabb::new(Vector3::repeat(-1.0), Vector3::repeat(1.0)))
+    }
+
+    fn transform(&self) -> &Transform {
+        &self.transform
+    }
+
+    fn transform_mut(&mut self) -> &mut Transform {
+        &mut self.transform
     }
 }

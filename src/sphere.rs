@@ -17,15 +17,12 @@ impl Sphere {
     pub fn new(transform: Transform, material: Material) -> Self {
         Sphere { transform, material }
     }
-}
 
-impl Intersect for Sphere {
-    fn test_intersection(&self, ray: &Ray) -> Option<IntersectionResult<'_>> {
-        let (p, v) = self.transform.ray_to_local(ray);
-
+    /// Local-space distance t along unit direction `v` from `p` to the nearest hit.
+    fn local_hit(p: &Vector3<f64>, v: &Vector3<f64>) -> Option<f64> {
         // |p + tv|^2 = 1, with |v| = 1 so a = 1.
-        let b = 2.0 * p.dot(&v);
-        let c = p.dot(&p) - 1.0;
+        let b = 2.0 * p.dot(v);
+        let c = p.dot(p) - 1.0;
         let discriminant = b * b - 4.0 * c;
 
         if discriminant < 0.0 {
@@ -35,7 +32,14 @@ impl Intersect for Sphere {
         // Closest intersection in front of the ray origin.
         let t1 = (-b - discriminant.sqrt()) / 2.0;
         let t2 = (-b + discriminant.sqrt()) / 2.0;
-        let t = if t1 > EPSILON { t1 } else if t2 > EPSILON { t2 } else { return None };
+        if t1 > EPSILON { Some(t1) } else if t2 > EPSILON { Some(t2) } else { None }
+    }
+}
+
+impl Intersect for Sphere {
+    fn test_intersection(&self, ray: &Ray) -> Option<IntersectionResult<'_>> {
+        let (p, v) = self.transform.ray_to_local(ray);
+        let t = Self::local_hit(&p, &v)?;
 
         // On a unit sphere at the origin, position == normal.
         let local_point = p + v * t;
@@ -52,7 +56,21 @@ impl Intersect for Sphere {
         })
     }
 
+    fn hit_distance(&self, ray: &Ray, max_dist: f64) -> Option<f64> {
+        let (p, v) = self.transform.ray_to_local(ray);
+        let dist = self.transform.distance_to_world(&v, Self::local_hit(&p, &v)?);
+        (dist < max_dist).then_some(dist)
+    }
+
     fn bounds(&self) -> Aabb {
         self.transform.bounds_to_world(&Aabb::new(Vector3::repeat(-1.0), Vector3::repeat(1.0)))
+    }
+
+    fn transform(&self) -> &Transform {
+        &self.transform
+    }
+
+    fn transform_mut(&mut self) -> &mut Transform {
+        &mut self.transform
     }
 }

@@ -1,5 +1,5 @@
 use nalgebra::Vector3;
-use crate::object_base::{Intersect, IntersectionResult};
+use crate::object_base::{IntersectionResult, ObjectList};
 
 
 	#[derive(Clone, Copy, Debug, Default)] 
@@ -12,5 +12,5 @@ pub struct IlluminationResult {
 
 pub trait Illuminate: Send + Sync {
     /// `objects` is the whole scene, so lights can check whether anything casts a shadow.
-    fn compute_illumination(&self, intersection_result: &IntersectionResult, objects: &[Box<dyn Intersect>]) -> Option<IlluminationResult>;
+    fn compute_illumination(&self, intersection_result: &IntersectionResult, objects: &ObjectList) -> Option<IlluminationResult>;
 }

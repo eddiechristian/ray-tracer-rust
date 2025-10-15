@@ -8,6 +8,10 @@ use crate::texture::{Flat, Texture};
 // but a ray passing through glass spends two bounces just entering and leaving).
 pub const MAX_DEPTH: u32 = 5;
 
+// Secondary rays whose share of the final pixel would be below this aren't traced: one step
+// of an 8-bit color channel. E.g. after 4 bounces off a 25%-reflective floor (0.25^4 < 1/255).
+pub const MIN_CONTRIBUTION: f64 = 1.0 / 255.0;
+
 // Secondary rays start this far off the surface so they don't immediately re-hit it.
 const SURFACE_BIAS: f64 = 1e-6;
 
@@ -61,8 +65,9 @@ impl Material {
         self
     }
 
-    /// Color seen along `ray`, which hit this material at `hit`. `depth` counts bounces so far.
-    pub fn compute_color(&self, scene: &Scene, ray: &Ray, hit: &IntersectionResult, depth: u32) -> Color {
+    /// Color seen along `ray`, which hit this material at `hit`. `depth` counts bounces so far;
+    /// `weight` is how much this color contributes to the final pixel (1.0 for camera rays).
+    pub fn compute_color(&self, scene: &Scene, ray: &Ray, hit: &IntersectionResult, depth: u32, weight: f64) -> Color {
         let normal = hit.local_normal;
         let dir = ray.lab.normalize();
 
@@ -86,16 +91,21 @@ impl Material {
 
         let mut color = self.texture.color(&hit.uv) * diffuse_intensity;
 
-        if self.reflectivity > 0.0 && depth < MAX_DEPTH {
+        // Share of the final pixel carried by each secondary ray: reflection is mixed in, then
+        // the result is itself mixed with the transmitted light.
+        let reflection_weight = weight * self.reflectivity * (1.0 - self.translucency);
+        let transmission_weight = weight * self.translucency;
+
+        if self.reflectivity > 0.0 && depth < MAX_DEPTH && reflection_weight >= MIN_CONTRIBUTION {
             let reflected = reflect(&dir, &normal);
-            let reflection = scene.trace(&offset_ray(hit, &reflected), depth + 1);
+            let reflection = scene.trace(&offset_ray(hit, &reflected), depth + 1, reflection_weight);
             color = reflection * self.reflectivity + color * (1.0 - self.reflectivity);
         }
 
-        if self.translucency > 0.0 && depth < MAX_DEPTH {
+        if self.translucency > 0.0 && depth < MAX_DEPTH && transmission_weight >= MIN_CONTRIBUTION {
             // Total internal reflection: no refracted ray exists, so the light reflects instead.
             let refracted = refract(&dir, &normal, self.ior).unwrap_or_else(|| reflect(&dir, &normal));
-            let transmission = scene.trace(&offset_ray(hit, &refracted), depth + 1);
+            let transmission = scene.trace(&offset_ray(hit, &refracted), depth + 1, transmission_weight);
             color = transmission * self.translucency + color * (1.0 - self.translucency);
         }
 

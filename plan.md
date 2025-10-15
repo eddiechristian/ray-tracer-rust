@@ -30,6 +30,11 @@ The renderer is single-threaded. It re-traces the whole image every frame. That'
 | 1. Optimized dev builds | done | | Debug build: ≥ 55 s → 1.96 s per frame. Rebuilds after an edit stay under 1 s. |
 | 2. rayon | done | 233 ms (4.3 FPS) | 5.2x. The CPU is an i7-6700 with 4 cores / 8 threads, so this is close to the ceiling. Output is byte-identical. |
 | 3. Build tuning | partly done | 227 ms (4.4 FPS) | `target-cpu=native`: ~3%, output byte-identical. LTO + `codegen-units = 1` gave no measurable gain but made every release rebuild take 47 s, so it was not kept. |
+| 4–6. Bounding-box culling, fast shadow test, deferred hit details | done | 138.5 ms (7.2 FPS) | 1.6x, output byte-identical. Done together through `ObjectList` and `Intersect::hit_distance`. |
+| 7. Fewer secondary rays | done | 116 ms (8.6 FPS) | 1.2x. Rays contributing < 1/255 are not traced. 1.6% of pixels changed, by at most 2/255. `MAX_DEPTH` was left at 5, since the weight cutoff already ends opaque chains after 3–4 bounces. |
+| 8. Precomputed transform matrices | done | ~108 ms (9.2 FPS) | ~1.07x. Setters keep the matrices in sync; `ObjectList::refresh_bounds` handles moved objects. 74 pixels changed, almost all exactly on checker-square boundaries (rounding). |
+
+Overall: 1,200 ms → ~108 ms, ~11x.
 
 ## Steps, in recommended order
 

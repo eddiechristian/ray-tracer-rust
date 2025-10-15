@@ -17,13 +17,9 @@ impl Cone {
     pub fn new(transform: Transform, material: Material) -> Self {
         Cone { transform, material }
     }
-}
 
-impl Intersect for Cone {
-    fn test_intersection(&self, ray: &Ray) -> Option<IntersectionResult<'_>> {
-        let (p, v) = self.transform.ray_to_local(ray);
-
-        // Closest valid hit so far: (t, local normal, hit a cap rather than the side).
+    /// Nearest hit along unit direction `v` from `p`: (local t, local normal, hit the cap rather than the side).
+    fn local_hit(p: &Vector3<f64>, v: &Vector3<f64>) -> Option<(f64, Vector3<f64>, bool)> {
         let mut best: Option<(f64, Vector3<f64>, bool)> = None;
         let mut consider = |t: f64, normal: Vector3<f64>, is_cap: bool| {
             if t > EPSILON && best.map_or(true, |(bt, _, _)| t < bt) {
@@ -63,7 +59,14 @@ impl Intersect for Cone {
             }
         }
 
-        let (t, local_normal, is_cap) = best?;
+        best
+    }
+}
+
+impl Intersect for Cone {
+    fn test_intersection(&self, ray: &Ray) -> Option<IntersectionResult<'_>> {
+        let (p, v) = self.transform.ray_to_local(ray);
+        let (t, local_normal, is_cap) = Self::local_hit(&p, &v)?;
         let local_point = p + v * t;
 
         // Side: angle around the axis and height; caps: flat x, y. As in the C++.
@@ -81,7 +84,22 @@ impl Intersect for Cone {
         })
     }
 
+    fn hit_distance(&self, ray: &Ray, max_dist: f64) -> Option<f64> {
+        let (p, v) = self.transform.ray_to_local(ray);
+        let (t, _, _) = Self::local_hit(&p, &v)?;
+        let dist = self.transform.distance_to_world(&v, t);
+        (dist < max_dist).then_some(dist)
+    }
+
     fn bounds(&self) -> Aabb {
         self.transform.bounds_to_world(&Aabb::new(Vector3::new(-1.0, -1.0, 0.0), Vector3::new(1.0, 1.0, 1.0)))
+    }
+
+    fn transform(&self) -> &Transform {
+        &self.transform
+    }
+
+    fn transform_mut(&mut self) -> &mut Transform {
+        &mut self.transform
     }
 }

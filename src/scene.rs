@@ -7,7 +7,7 @@ use crate::cylinder::Cylinder;
 use crate::cone::Cone;
 use crate::composite::Composite;
 use crate::camera::Camera;
-use crate::object_base::{closest_hit, Intersect, IntersectionResult};
+use crate::object_base::{Intersect, IntersectionResult, ObjectList};
 use crate::material::Material;
 use crate::texture::Checker;
 use crate::light_base::Illuminate;
@@ -20,7 +20,7 @@ use rayon::prelude::*;
 
 pub struct Scene {
     pub camera: Camera,
-    pub objects: Vec<Box<dyn Intersect>>,
+    pub objects: ObjectList,
     pub lights: Vec<Box<dyn Illuminate>>,
     pub x_size: u32,
     pub y_size: u32,
@@ -68,53 +68,55 @@ impl Scene {
         let mut tilted_can = Transform::new(Vector3::new(3.1, 0.0, -0.4), Vector3::repeat(0.5));
         tilted_can.set_rotation_euler(0.3, -0.5, 0.0);
 
+        let objects: Vec<Box<dyn Intersect>> = vec![
+            // Reflective checkerboard floor, as in the C++ Ep10 scene.
+            Box::new(Plane::new(floor, Material::new(
+                Checker::new(Color::new(1.0, 1.0, 1.0), Color::new(0.2, 0.2, 0.2))
+                    .with_transform(Vector2::zeros(), 0.0, Vector2::new(12.0, 12.0)),
+            ).with_reflectivity(0.25))),
+            // Glass: mostly refracted light (the floor seen through it, flipped), slight red tint.
+            Box::new(Sphere::new(sphere, Material::flat(Color::new(1.0, 0.6, 0.6))
+                .with_reflectivity(0.1)
+                .with_specular(1.0, 64.0)
+                .with_translucency(0.8, 1.5))),
+            Box::new(Cuboid::new(cuboid, Material::new(
+                Checker::new(Color::new(0.0, 1.0, 0.0), Color::new(0.0, 0.3, 0.0))
+                    .with_transform(Vector2::zeros(), 0.0, Vector2::new(2.0, 2.0)),
+            ))),
+            Box::new(Cylinder::new(cylinder, Material::flat(Color::new(0.2, 0.4, 1.0))
+                .with_reflectivity(0.3)
+                .with_specular(1.0, 32.0))),
+            Box::new(Cone::new(cone, Material::flat(Color::new(1.0, 0.8, 0.0))
+                .with_specular(0.6, 16.0))),
+
+            Box::new(Plane::new(panel, Material::new(
+                Checker::new(Color::new(1.0, 1.0, 1.0), Color::new(0.0, 0.0, 0.0))
+                    .with_transform(Vector2::zeros(), 0.0, Vector2::new(4.0, 4.0)),
+            ))),
+            Box::new(Sphere::new(ellipsoid, Material::flat(Color::new(1.0, 0.2, 0.8))
+                .with_reflectivity(0.6)
+                .with_specular(1.0, 32.0))),
+            Box::new(Cuboid::new(tilted_cuboid, Material::flat(Color::new(0.0, 0.9, 0.9))
+                .with_specular(0.5, 8.0))),
+            // Checker on the side wraps around the axis: u is the angle, v the height.
+            Box::new(Cylinder::new(tilted_cylinder, Material::new(
+                Checker::new(Color::new(1.0, 0.5, 0.0), Color::new(0.3, 0.1, 0.0))
+                    .with_transform(Vector2::zeros(), 0.0, Vector2::new(4.0, 2.0)),
+            ))),
+            Box::new(Cone::new(tilted_cone, Material::flat(Color::new(0.6, 0.3, 1.0))
+                .with_specular(1.0, 32.0))),
+
+            // Composites: one standing on the floor, one floating and tilted as a whole.
+            Box::new(spray_can(
+                Transform::new(Vector3::new(-3.0, 0.0, -1.0), Vector3::repeat(0.5)),
+                Color::new(0.9, 0.1, 0.1),
+            )),
+            Box::new(spray_can(tilted_can, Color::new(0.1, 0.3, 0.9))),
+        ];
+
         Scene {
             camera: Camera::default(),
-            objects: vec![
-                // Reflective checkerboard floor, as in the C++ Ep10 scene.
-                Box::new(Plane::new(floor, Material::new(
-                    Checker::new(Color::new(1.0, 1.0, 1.0), Color::new(0.2, 0.2, 0.2))
-                        .with_transform(Vector2::zeros(), 0.0, Vector2::new(12.0, 12.0)),
-                ).with_reflectivity(0.25))),
-                // Glass: mostly refracted light (the floor seen through it, flipped), slight red tint.
-                Box::new(Sphere::new(sphere, Material::flat(Color::new(1.0, 0.6, 0.6))
-                    .with_reflectivity(0.1)
-                    .with_specular(1.0, 64.0)
-                    .with_translucency(0.8, 1.5))),
-                Box::new(Cuboid::new(cuboid, Material::new(
-                    Checker::new(Color::new(0.0, 1.0, 0.0), Color::new(0.0, 0.3, 0.0))
-                        .with_transform(Vector2::zeros(), 0.0, Vector2::new(2.0, 2.0)),
-                ))),
-                Box::new(Cylinder::new(cylinder, Material::flat(Color::new(0.2, 0.4, 1.0))
-                    .with_reflectivity(0.3)
-                    .with_specular(1.0, 32.0))),
-                Box::new(Cone::new(cone, Material::flat(Color::new(1.0, 0.8, 0.0))
-                    .with_specular(0.6, 16.0))),
-
-                Box::new(Plane::new(panel, Material::new(
-                    Checker::new(Color::new(1.0, 1.0, 1.0), Color::new(0.0, 0.0, 0.0))
-                        .with_transform(Vector2::zeros(), 0.0, Vector2::new(4.0, 4.0)),
-                ))),
-                Box::new(Sphere::new(ellipsoid, Material::flat(Color::new(1.0, 0.2, 0.8))
-                    .with_reflectivity(0.6)
-                    .with_specular(1.0, 32.0))),
-                Box::new(Cuboid::new(tilted_cuboid, Material::flat(Color::new(0.0, 0.9, 0.9))
-                    .with_specular(0.5, 8.0))),
-                // Checker on the side wraps around the axis: u is the angle, v the height.
-                Box::new(Cylinder::new(tilted_cylinder, Material::new(
-                    Checker::new(Color::new(1.0, 0.5, 0.0), Color::new(0.3, 0.1, 0.0))
-                        .with_transform(Vector2::zeros(), 0.0, Vector2::new(4.0, 2.0)),
-                ))),
-                Box::new(Cone::new(tilted_cone, Material::flat(Color::new(0.6, 0.3, 1.0))
-                    .with_specular(1.0, 32.0))),
-
-                // Composites: one standing on the floor, one floating and tilted as a whole.
-                Box::new(spray_can(
-                    Transform::new(Vector3::new(-3.0, 0.0, -1.0), Vector3::repeat(0.5)),
-                    Color::new(0.9, 0.1, 0.1),
-                )),
-                Box::new(spray_can(tilted_can, Color::new(0.1, 0.3, 0.9))),
-            ],
+            objects: ObjectList::from(objects),
             lights: vec![
                 Box::new(PointLight::new(Point3::new(5.0, -10.0, 5.0), 1.0)),
                 Box::new(AmbientLight::new(0.15)),
@@ -126,14 +128,15 @@ impl Scene {
 
     /// The closest hit along `ray` across all objects in the scene.
     pub fn closest_hit(&self, ray: &Ray) -> Option<IntersectionResult<'_>> {
-        closest_hit(&self.objects, ray)
+        self.objects.closest_hit(ray)
     }
 
     /// Color seen along `ray`. Materials call this recursively for reflections and
-    /// refraction, with `depth` counting the bounces so far.
-    pub fn trace(&self, ray: &Ray, depth: u32) -> Color {
+    /// refraction, with `depth` counting the bounces so far and `weight` the share of the
+    /// final pixel this ray carries (1.0 for camera rays).
+    pub fn trace(&self, ray: &Ray, depth: u32, weight: f64) -> Color {
         match self.closest_hit(ray) {
-            Some(hit) => hit.material.compute_color(self, ray, &hit, depth),
+            Some(hit) => hit.material.compute_color(self, ray, &hit, depth, weight),
             None => Color::default(), // Background is black.
         }
     }
@@ -157,7 +160,7 @@ impl Scene {
                     let norm_x: f64 = x as f64 * x_fact - 1.0;
                     let ray = self.camera.generate_ray(norm_x, norm_y);
 
-                    let color = self.trace(&ray, 0);
+                    let color = self.trace(&ray, 0, 1.0);
 
                     // Colors are 0.0..=1.0; the `as u8` cast saturates anything out of range.
                     pixel[0] = (color.r * 255.0) as u8; // R

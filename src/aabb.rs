@@ -52,6 +52,12 @@ impl Aabb {
 
     /// Does the ray (starting at point1, travelling along lab) pass through the box?
     pub fn hit(&self, ray: &Ray) -> bool {
+        self.entry_distance(ray).is_some()
+    }
+
+    /// If the ray passes through the box, how far along it the box starts (0.0 if the ray
+    /// starts inside), in units of `ray.lab`'s length; pass a unit-length `lab` for distances.
+    pub fn entry_distance(&self, ray: &Ray) -> Option<f64> {
         // Slab method, as in Cuboid::test_intersection.
         let mut t_near = f64::NEG_INFINITY;
         let mut t_far = f64::INFINITY;
@@ -59,7 +65,7 @@ impl Aabb {
             let (lo, hi) = (self.min[i] - PADDING, self.max[i] + PADDING);
             if ray.lab[i] == 0.0 {
                 if ray.point1[i] < lo || ray.point1[i] > hi {
-                    return false;
+                    return None;
                 }
             } else {
                 let t1 = (lo - ray.point1[i]) / ray.lab[i];
@@ -68,6 +74,6 @@ impl Aabb {
                 t_far = t_far.min(t1.max(t2));
             }
         }
-        t_near <= t_far && t_far >= 0.0
+        (t_near <= t_far && t_far >= 0.0).then_some(t_near.max(0.0))
     }
 }
