@@ -1,10 +1,10 @@
-use crate::vec3::Vec3;
+use nalgebra::Vector3;
 
 #[derive(Clone, Copy, Debug, Default)] 
 pub struct Ray {
-    pub point1: Vec3,
-    pub point2: Vec3,
-    pub lab: Vec3,
+    pub point1: Vector3<f64>,
+    pub point2: Vector3<f64>,
+    pub lab: Vector3<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)] 
@@ -16,7 +16,7 @@ pub struct Color {
 
 impl Ray {
     /// Creates a new Ray with the given points and lab values.
-    pub fn new(point1: Vec3, point2: Vec3) -> Self {
+    pub fn new(point1: Vector3<f64>, point2: Vector3<f64>) -> Self {
         let lab = point2 - point1;
         Self { point1, point2, lab }
     }

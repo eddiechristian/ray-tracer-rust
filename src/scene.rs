@@ -1,6 +1,7 @@
 use crate::sphere::Sphere;
 use crate::camera::Camera;
 use crate::object_base::Intersect;
+use nalgebra::Vector3;
 
 pub struct Scene {
     pub camera: Camera,
@@ -14,7 +15,7 @@ impl Scene {
 
     pub fn new() -> Self {
         
-        Scene { camera: Camera::default(), sphere: Sphere, x_size: 1280, y_size: 720 }
+        Scene { camera: Camera::default(), sphere: Sphere::new(Vector3::new(5.0, 0.0, 0.0), 3.0), x_size: 1280, y_size: 720 }
     }
     
     pub fn render(&self,  buffer: &mut [u8])
@@ -33,7 +34,7 @@ impl Scene {
                     let pixel_index = (((y * self.x_size) + x) * 4) as usize;
                     if let Some(intersection) = self.sphere.test_intersection(&ray) {
                             
-                        let dist: f64 = (intersection.intersection - ray.point1).length();
+                        let dist: f64 = (intersection.intersection - ray.point1).norm();
 
                         let red: u8 = (255.0 - ((dist - 9.0) / 0.94605) * 255.0) as u8;
                             

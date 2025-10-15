@@ -1,6 +1,5 @@
 mod camera;
 mod ray;
-mod vec3;
 mod object_base;
 mod sphere;
 mod scene;

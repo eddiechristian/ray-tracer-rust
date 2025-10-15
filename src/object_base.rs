@@ -1,11 +1,11 @@
-use crate::vec3::Vec3;
+use nalgebra::Vector3;
 use crate::ray::Ray;
 // use crate::ray::Color;
 
 #[derive(Clone, Copy, Debug, Default)] 
 pub struct IntersectionResult {
-    pub intersection: Vec3,
-    pub local_normal: Vec3,
+    pub intersection: Vector3<f64>,
+    pub local_normal: Vector3<f64>,
 }
 
 pub trait Intersect {
