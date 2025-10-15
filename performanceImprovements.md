@@ -164,6 +164,30 @@ Every ray tests up to 16 boxes, and each test did 6 divisions, so about 96 divis
 | `atan2` (texture UVs) + `acos` (point-light angle) | ~5% |
 | Shape intersection maths | ~10% |
 
+## Tried after step 9, not kept
+
+| Attempt | Result | Why |
+|---|---|---|
+| BVH (tree of bounding boxes) in `ObjectList`, 1 object per leaf | 62 → 80 ms (slower) | With 16 objects, walking the tree costs more than it skips. The floor's box contains everything else, so most rays descend deep into the tree anyway. |
+| Same BVH, up to 4 objects per leaf | 62 → 75 ms (slower) | Better, but still slower than the plain list. Worth revisiting for scenes with hundreds of objects. |
+| Batched box tests (8 boxes stored axis by axis, for AVX2) | 62 → 77 ms (slower) | It always tests all 8 boxes, while the plain loop skips quickly, and the gain from vectorizing didn't make up for it. |
+
+## Where the time goes after step 9 (measured)
+
+Instruction counts from callgrind pointed at the box tests, but making them cheaper further didn't help (see above). So instead, each part was switched off in a scratch copy and the frame re-timed:
+
+| Switched off | Frame time | Cost of that part |
+|---|---|---|
+| nothing (baseline) | 61.3 ms | |
+| all reflection/refraction rays | 35.0 ms | ~26 ms (43%) |
+| **just the floor's reflectivity** | **42.0 ms** | **~19 ms (31%)** |
+| just refraction (glass) | 54.3 ms | ~7 ms |
+| all lighting (diffuse, specular, shadows) | 45.2 ms | ~16 ms |
+| just shadow rays | 51.7 ms | ~10 ms |
+| box culling (step 4) | 136 ms | the culling saves ~75 ms; essential |
+
+Conclusion: the remaining time is mostly real work that the scene's materials ask for, above all one reflection ray per floor pixel. Another 2x without changing the image would need large structural changes (e.g. tracing packets of rays with SIMD, or the GPU). The cheaper routes all trade a little image quality or change the scene (see `plan.md`).
+
 ## How to profile
 
 ```bash

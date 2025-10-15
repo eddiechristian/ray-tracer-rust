@@ -1,4 +1,4 @@
-use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, FRAC_PI_6, PI};
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, FRAC_PI_6, PI, TAU};
 
 use crate::sphere::Sphere;
 use crate::plane::Plane;
@@ -15,7 +15,7 @@ use crate::point_light::PointLight;
 use crate::ambient_light::AmbientLight;
 use crate::ray::{Color, Ray};
 use crate::transform::Transform;
-use nalgebra::{Point3, Vector2, Vector3};
+use nalgebra::{Point3, UnitQuaternion, Vector2, Vector3};
 use rayon::prelude::*;
 
 pub struct Scene {
@@ -24,8 +24,26 @@ pub struct Scene {
     pub lights: Vec<Box<dyn Illuminate>>,
     pub x_size: u32,
     pub y_size: u32,
-
+    pub wobble: Wobble,
 }
+
+/// An object standing on the floor that rocks from side to side, tipping onto the edge of
+/// its base (like a can nudged on a table) rather than sinking into the floor.
+pub struct Wobble {
+    /// Index of the object in `Scene::objects`. Its local origin must be the centre of its base.
+    pub object: usize,
+    /// Where the base centre sits when upright.
+    pub rest_position: Vector3<f64>,
+    /// Radius of the base, in world units: the rim it rocks on.
+    pub base_radius: f64,
+    /// Largest tilt, in radians.
+    pub amplitude: f64,
+    /// Rocks per second (one rock = over to one side, over to the other, and back).
+    pub frequency: f64,
+}
+
+/// Radius of a spray can's body in its local space (see `spray_can`).
+const SPRAY_CAN_RADIUS: f64 = 0.4;
 
 impl Scene {
 
@@ -68,7 +86,7 @@ impl Scene {
         let mut tilted_can = Transform::new(Vector3::new(3.1, 0.0, -0.4), Vector3::repeat(0.5));
         tilted_can.set_rotation_euler(0.3, -0.5, 0.0);
 
-        let objects: Vec<Box<dyn Intersect>> = vec![
+        let mut objects: Vec<Box<dyn Intersect>> = vec![
             // Reflective checkerboard floor, as in the C++ Ep10 scene.
             Box::new(Plane::new(floor, Material::new(
                 Checker::new(Color::new(1.0, 1.0, 1.0), Color::new(0.2, 0.2, 0.2))
@@ -105,14 +123,24 @@ impl Scene {
             ))),
             Box::new(Cone::new(tilted_cone, Material::flat(Color::new(0.6, 0.3, 1.0))
                 .with_specular(1.0, 32.0))),
-
-            // Composites: one standing on the floor, one floating and tilted as a whole.
-            Box::new(spray_can(
-                Transform::new(Vector3::new(-3.0, 0.0, -1.0), Vector3::repeat(0.5)),
-                Color::new(0.9, 0.1, 0.1),
-            )),
-            Box::new(spray_can(tilted_can, Color::new(0.1, 0.3, 0.9))),
         ];
+
+        // Composites: one standing on the floor (it wobbles, see `animate`), one floating and
+        // tilted as a whole.
+        let can_position = Vector3::new(-3.0, 0.0, -1.0);
+        let can_scale = 0.5;
+        let wobble = Wobble {
+            object: objects.len(),
+            rest_position: can_position,
+            base_radius: SPRAY_CAN_RADIUS * can_scale,
+            amplitude: 12.0_f64.to_radians(),
+            frequency: 0.8,
+        };
+        objects.push(Box::new(spray_can(
+            Transform::new(can_position, Vector3::repeat(can_scale)),
+            Color::new(0.9, 0.1, 0.1),
+        )));
+        objects.push(Box::new(spray_can(tilted_can, Color::new(0.1, 0.3, 0.9))));
 
         Scene {
             camera: Camera::default(),
@@ -123,7 +151,28 @@ impl Scene {
             ],
             x_size: 1280,
             y_size: 720,
+            wobble,
         }
+    }
+
+    /// Moves the animated objects to where they are `time` seconds after the start, then
+    /// refreshes the cached bounding boxes. Call once per frame, before `render`.
+    pub fn animate(&mut self, time: f64) {
+        let w = &self.wobble;
+        let angle = w.amplitude * (TAU * w.frequency * time).sin();
+
+        // Tilting about the y axis. A positive angle tips the top toward +x, so the can rests
+        // on the +x edge of its base; a negative angle, the -x edge. Rotating the upright can
+        // about that rim point keeps the rim on the floor.
+        let rotation = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), angle);
+        let pivot = w.rest_position + Vector3::new(w.base_radius * angle.signum(), 0.0, 0.0);
+        let position = pivot + rotation * (w.rest_position - pivot);
+
+        let transform = self.objects.get_mut(w.object).expect("wobble object index").transform_mut();
+        transform.set_rotation(rotation);
+        transform.set_translation(position);
+
+        self.objects.refresh_bounds();
     }
 
     /// The closest hit along `ray` across all objects in the scene.
@@ -175,7 +224,7 @@ impl Scene {
 /// A spray can built from three shapes, as in the C++ qbRayTrace2 composite example.
 /// Local space: base at the origin, standing 2.7 tall along +z with radius 0.4.
 fn spray_can(transform: Transform, body_color: Color) -> Composite {
-    let body = Transform::new(Vector3::new(0.0, 0.0, 1.0), Vector3::new(0.4, 0.4, 1.0));
+    let body = Transform::new(Vector3::new(0.0, 0.0, 1.0), Vector3::new(SPRAY_CAN_RADIUS, SPRAY_CAN_RADIUS, 1.0));
 
     // Cone flipped to point up, with its base sitting on top of the body.
     let mut shoulder = Transform::new(Vector3::new(0.0, 0.0, 2.5), Vector3::new(0.4, 0.4, 0.5));
@@ -192,4 +241,41 @@ fn spray_can(transform: Transform, body_color: Color) -> Composite {
             .with_specular(1.0, 64.0)))
         .with_shape(Cylinder::new(nozzle, Material::flat(Color::new(0.95, 0.95, 0.95))
             .with_specular(0.5, 16.0)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wobbling can's base rim must touch the floor (z = -1) at all times, never sinking in.
+    #[test]
+    fn wobbling_can_rests_on_the_floor() {
+        let mut scene = Scene::new();
+        for step in 0..=40 {
+            let time = step as f64 * 0.05;
+            scene.animate(time);
+            let transform = scene.objects.get(scene.wobble.object).unwrap().transform();
+
+            // Points around the base rim, in the can's local space (base at z = 0).
+            let lowest = (0..360)
+                .map(|deg| {
+                    let a = (deg as f64).to_radians();
+                    let rim = Vector3::new(SPRAY_CAN_RADIUS * a.cos(), SPRAY_CAN_RADIUS * a.sin(), 0.0);
+                    transform.point_to_world(&rim).z
+                })
+                .fold(f64::INFINITY, f64::min);
+            assert!((lowest - -1.0).abs() < 1e-9, "t = {time}: lowest rim point at z = {lowest}");
+        }
+    }
+
+    /// At time 0 the can is upright, exactly as built.
+    #[test]
+    fn animate_at_time_zero_leaves_the_scene_unchanged() {
+        let mut scene = Scene::new();
+        let before = scene.objects.get(scene.wobble.object).unwrap().transform().translation();
+        scene.animate(0.0);
+        let transform = scene.objects.get(scene.wobble.object).unwrap().transform();
+        assert!((transform.translation() - before).norm() < 1e-12);
+        assert!(transform.rotation().angle() < 1e-12);
+    }
 }

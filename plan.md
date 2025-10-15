@@ -143,11 +143,17 @@ callgrind_annotate --inclusive=yes /tmp/rt.callgrind | head -60   # work includi
 
 Callgrind runs about 50x slower than normal (~1 minute for one frame) and counts instructions, not time. A division and a multiply each count as one instruction, but the division is much slower, so read the numbers as "where the work is", not exact time.
 
-After step 9, the profile suggests these next candidates (see `performanceImprovements.md`):
-- Fewer box tests per ray: grouping or a BVH.
-- A shadow-ray "last blocker" cache.
-- Skipping the box test for the floor.
-- Avoiding `atan2`/`acos` where they aren't needed.
+After step 9, three attempts to reduce box-test cost were slower (a BVH twice, and batched SIMD box tests). Timing experiments show the real cost is in the rays the materials ask for: the floor's reflections alone are ~31% of the frame. See `performanceImprovements.md`. Remaining options:
+- **Same image:**
+  - shadow-ray "last blocker" cache (shadows are ~10 ms in total);
+  - avoid `atan2`/`acos` (~5%).
+  - Small gains only.
+- **Small image changes:**
+  - Raise `MIN_CONTRIBUTION` (stop faint reflections sooner).
+  - Shade reflected rays more cheaply, e.g. without their own shadow rays.
+  - These make reflections slightly less accurate.
+- **Scene choices:** a less reflective floor (or one with no reflections) saves up to ~19 ms.
+- **Large structural changes:** packet/SIMD ray tracing, f32, or GPU compute.
 
 ### Later / only if needed
 

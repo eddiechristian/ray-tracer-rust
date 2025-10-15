@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scene = scene::Scene::new();
     let orbit_center = scene.camera.look_at();
     let orbit_start = scene.camera.position();
-    let orbit_timer = Instant::now();
+    let start_time = Instant::now();
 
     // Render continuously instead of only when an event arrives, so FPS is meaningful.
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -115,10 +115,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } => elwt.exit(),
             Event::AboutToWait => {
-                // 0. Move the camera along its orbit. Based on elapsed time, so the speed
-                //    doesn't depend on the frame rate.
-                let angle = orbit_timer.elapsed().as_secs_f64() / ORBIT_PERIOD_SECS * TAU;
+                // 0. Move the camera along its orbit and animate the objects. Based on elapsed
+                //    time, so the speed doesn't depend on the frame rate.
+                let time = start_time.elapsed().as_secs_f64();
+                let angle = time / ORBIT_PERIOD_SECS * TAU;
                 scene.camera.set_position(orbit_position(orbit_center, orbit_start, angle));
+                scene.animate(time);
 
                 // 1. Get a mutable slice of your entire screen buffer
                 let frame: &mut [u8] = pixels.frame_mut();
