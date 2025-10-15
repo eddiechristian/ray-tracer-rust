@@ -1,6 +1,7 @@
 use std::f64::consts::PI;
 
-use nalgebra::Vector2;
+use nalgebra::{Vector2, Vector3};
+use crate::aabb::Aabb;
 use crate::material::Material;
 use crate::ray::Ray;
 use crate::object_base::{Intersect, IntersectionResult, EPSILON};
@@ -19,7 +20,7 @@ impl Sphere {
 }
 
 impl Intersect for Sphere {
-    fn test_intersection(&self, ray: &Ray) -> Option<IntersectionResult> {
+    fn test_intersection(&self, ray: &Ray) -> Option<IntersectionResult<'_>> {
         let (p, v) = self.transform.ray_to_local(ray);
 
         // |p + tv|^2 = 1, with |v| = 1 so a = 1.
@@ -47,10 +48,11 @@ impl Intersect for Sphere {
             intersection: self.transform.point_to_world(&local_point),
             local_normal: self.transform.normal_to_world(&local_point),
             uv,
+            material: &self.material,
         })
     }
 
-    fn material(&self) -> &Material {
-        &self.material
+    fn bounds(&self) -> Aabb {
+        self.transform.bounds_to_world(&Aabb::new(Vector3::repeat(-1.0), Vector3::repeat(1.0)))
     }
 }

@@ -1,3 +1,4 @@
+use crate::aabb::Aabb;
 use crate::ray::Ray;
 use nalgebra::{Isometry3, Point3, Translation3, UnitQuaternion, Vector3};
 
@@ -28,6 +29,18 @@ impl Transform {
         let p = self.isometry.inverse_transform_point(&Point3::from(ray.point1)).coords.component_div(&self.scale);
         let v = self.isometry.inverse_transform_vector(&ray.lab).component_div(&self.scale).normalize();
         (p, v)
+    }
+
+    /// `ray_to_local` as a Ray, for passing on to objects nested inside this transform.
+    pub fn ray_to_local_ray(&self, ray: &Ray) -> Ray {
+        let (p, v) = self.ray_to_local(ray);
+        Ray::new(p, p + v)
+    }
+
+    /// World-space box around a local-space box: transform its corners and re-fit.
+    /// (Rotation makes this looser than the shape, but it is always a valid bound.)
+    pub fn bounds_to_world(&self, local_bounds: &Aabb) -> Aabb {
+        Aabb::from_points(local_bounds.corners().iter().map(|c| self.point_to_world(c)))
     }
 
     pub fn point_to_world(&self, local_point: &Vector3<f64>) -> Vector3<f64> {

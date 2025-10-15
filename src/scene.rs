@@ -5,8 +5,9 @@ use crate::plane::Plane;
 use crate::cuboid::Cuboid;
 use crate::cylinder::Cylinder;
 use crate::cone::Cone;
+use crate::composite::Composite;
 use crate::camera::Camera;
-use crate::object_base::{Intersect, IntersectionResult};
+use crate::object_base::{closest_hit, Intersect, IntersectionResult};
 use crate::material::Material;
 use crate::texture::Checker;
 use crate::light_base::Illuminate;
@@ -28,10 +29,10 @@ pub struct Scene {
 impl Scene {
 
     pub fn new() -> Self {
-        // The default camera sees roughly -2.5 <= x <= 2.5 and -1.4 <= z <= 1.4 at y = 0,
+        // The default camera sees roughly -3.5 <= x <= 3.5 and -2 <= z <= 2 at y = 0,
         // so the objects are small and sit in a row on a floor at z = -1.
 
-        let floor = Transform::new(Vector3::new(0.0, 0.0, -1.0), Vector3::new(4.0, 4.0, 1.0));
+        let floor = Transform::new(Vector3::new(0.0, 0.0, -1.0), Vector3::new(6.0, 6.0, 1.0));
 
         let sphere = Transform::new(Vector3::new(-1.8, 0.0, -0.55), Vector3::new(0.45, 0.45, 0.45));
 
@@ -62,13 +63,17 @@ impl Scene {
         let mut tilted_cone = Transform::new(Vector3::new(1.55, 0.0, 0.75), Vector3::new(0.35, 0.35, 0.7));
         tilted_cone.set_rotation_euler(FRAC_PI_6, FRAC_PI_2, 0.0);
 
+        // The can's origin is its base, so this leans the whole can left and toward the camera.
+        let mut tilted_can = Transform::new(Vector3::new(3.1, 0.0, -0.4), Vector3::repeat(0.5));
+        tilted_can.set_rotation_euler(0.3, -0.5, 0.0);
+
         Scene {
             camera: Camera::default(),
             objects: vec![
                 // Reflective checkerboard floor, as in the C++ Ep10 scene.
                 Box::new(Plane::new(floor, Material::new(
                     Checker::new(Color::new(1.0, 1.0, 1.0), Color::new(0.2, 0.2, 0.2))
-                        .with_transform(Vector2::zeros(), 0.0, Vector2::new(8.0, 8.0)),
+                        .with_transform(Vector2::zeros(), 0.0, Vector2::new(12.0, 12.0)),
                 ).with_reflectivity(0.25))),
                 // Glass: mostly refracted light (the floor seen through it, flipped), slight red tint.
                 Box::new(Sphere::new(sphere, Material::flat(Color::new(1.0, 0.6, 0.6))
@@ -101,6 +106,13 @@ impl Scene {
                 ))),
                 Box::new(Cone::new(tilted_cone, Material::flat(Color::new(0.6, 0.3, 1.0))
                     .with_specular(1.0, 32.0))),
+
+                // Composites: one standing on the floor, one floating and tilted as a whole.
+                Box::new(spray_can(
+                    Transform::new(Vector3::new(-3.0, 0.0, -1.0), Vector3::repeat(0.5)),
+                    Color::new(0.9, 0.1, 0.1),
+                )),
+                Box::new(spray_can(tilted_can, Color::new(0.1, 0.3, 0.9))),
             ],
             lights: vec![
                 Box::new(PointLight::new(Point3::new(5.0, -10.0, 5.0), 1.0)),
@@ -111,23 +123,16 @@ impl Scene {
         }
     }
 
-    /// The closest object hit by `ray`, and where.
-    pub fn closest_hit(&self, ray: &Ray) -> Option<(&dyn Intersect, IntersectionResult)> {
-        self.objects
-            .iter()
-            .filter_map(|object| object.test_intersection(ray).map(|hit| (object.as_ref(), hit)))
-            .min_by(|(_, a), (_, b)| {
-                let dist_a = (a.intersection - ray.point1).norm_squared();
-                let dist_b = (b.intersection - ray.point1).norm_squared();
-                dist_a.total_cmp(&dist_b)
-            })
+    /// The closest hit along `ray` across all objects in the scene.
+    pub fn closest_hit(&self, ray: &Ray) -> Option<IntersectionResult<'_>> {
+        closest_hit(&self.objects, ray)
     }
 
     /// Color seen along `ray`. Materials call this recursively for reflections and
     /// refraction, with `depth` counting the bounces so far.
     pub fn trace(&self, ray: &Ray, depth: u32) -> Color {
         match self.closest_hit(ray) {
-            Some((object, hit)) => object.material().compute_color(self, ray, &hit, depth),
+            Some(hit) => hit.material.compute_color(self, ray, &hit, depth),
             None => Color::default(), // Background is black.
         }
     }
@@ -157,4 +162,26 @@ impl Scene {
         }
 
     }
+}
+
+/// A spray can built from three shapes, as in the C++ qbRayTrace2 composite example.
+/// Local space: base at the origin, standing 2.7 tall along +z with radius 0.4.
+fn spray_can(transform: Transform, body_color: Color) -> Composite {
+    let body = Transform::new(Vector3::new(0.0, 0.0, 1.0), Vector3::new(0.4, 0.4, 1.0));
+
+    // Cone flipped to point up, with its base sitting on top of the body.
+    let mut shoulder = Transform::new(Vector3::new(0.0, 0.0, 2.5), Vector3::new(0.4, 0.4, 0.5));
+    shoulder.set_rotation_euler(PI, 0.0, 0.0);
+
+    let nozzle = Transform::new(Vector3::new(0.0, 0.0, 2.55), Vector3::new(0.12, 0.12, 0.15));
+
+    Composite::new(transform)
+        .with_shape(Cylinder::new(body, Material::flat(body_color)
+            .with_reflectivity(0.15)
+            .with_specular(1.0, 32.0)))
+        .with_shape(Cone::new(shoulder, Material::flat(Color::new(0.7, 0.7, 0.7))
+            .with_reflectivity(0.6)
+            .with_specular(1.0, 64.0)))
+        .with_shape(Cylinder::new(nozzle, Material::flat(Color::new(0.95, 0.95, 0.95))
+            .with_specular(0.5, 16.0)))
 }

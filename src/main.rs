@@ -7,6 +7,8 @@ mod cuboid;
 mod cylinder;
 mod cone;
 mod transform;
+mod aabb;
+mod composite;
 mod material;
 mod texture;
 mod scene;

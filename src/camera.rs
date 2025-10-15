@@ -16,7 +16,7 @@ pub struct Camera {
 
 pub const DEFAULT_POS: Vector3<f64> = Vector3::new(0.0, -10.0, 0.0);
 pub const DEFAULT_LOOK_AT: Vector3<f64> = Vector3::new(0.0, 0.0, 0.0);
-pub const DEFAULT_HORIZ_SZ: f64 = 0.25;
+pub const DEFAULT_HORIZ_SZ: f64 = 0.35;
 pub const DEFAULT_CAMERA_LEN: f64 = 1.0;
 pub const DEFAULT_ASPECT_RATIO: f64 = 1280.0/ 720.0;
 
