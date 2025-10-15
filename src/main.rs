@@ -9,6 +9,7 @@ mod cone;
 mod transform;
 mod scene;
 mod point_light;
+mod ambient_light;
 mod light_base;
 
 use std::time::Instant;

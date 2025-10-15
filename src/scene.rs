@@ -9,6 +9,7 @@ use crate::camera::Camera;
 use crate::object_base::Intersect;
 use crate::light_base::Illuminate;
 use crate::point_light::PointLight;
+use crate::ambient_light::AmbientLight;
 use crate::ray::Color;
 use crate::transform::Transform;
 use nalgebra::{Point3, Vector3};
@@ -16,7 +17,7 @@ use nalgebra::{Point3, Vector3};
 pub struct Scene {
     pub camera: Camera,
     pub objects: Vec<Box<dyn Intersect>>,
-    pub light: PointLight,
+    pub lights: Vec<Box<dyn Illuminate>>,
     pub x_size: u32,
     pub y_size: u32,
 
@@ -73,7 +74,10 @@ impl Scene {
                 Box::new(Cylinder::new(tilted_cylinder, Color { r: 1.0, g: 0.5, b: 0.0 })),
                 Box::new(Cone::new(tilted_cone, Color { r: 0.6, g: 0.3, b: 1.0 })),
             ],
-            light: PointLight::new(Point3::new(5.0, -10.0, 5.0), 1.0),
+            lights: vec![
+                Box::new(PointLight::new(Point3::new(5.0, -10.0, 5.0), 1.0)),
+                Box::new(AmbientLight::new(0.15)),
+            ],
             x_size: 1280,
             y_size: 720,
         }
@@ -93,7 +97,7 @@ impl Scene {
                     let ray = self.camera.generate_ray(norm_x, norm_y);
                     let pixel_index = (((y * self.x_size) + x) * 4) as usize;
 
-                    // Background, and surfaces facing away from the light, are black.
+                    // Background is black.
                     let mut color = Color::default();
 
                     // The visible object is the closest one the ray hits.
@@ -107,13 +111,18 @@ impl Scene {
                         });
 
                     if let Some(intersection) = closest {
-                        if let Some(illumination) = self.light.compute_illumination(&intersection) {
-                            color = Color {
-                                r: intersection.color.r * illumination.intensity,
-                                g: intersection.color.g * illumination.intensity,
-                                b: intersection.color.b * illumination.intensity,
-                            };
-                        }
+                        // Light contributions add up; lights that don't reach this point return None.
+                        let intensity: f64 = self.lights
+                            .iter()
+                            .filter_map(|light| light.compute_illumination(&intersection))
+                            .map(|illumination| illumination.intensity)
+                            .sum();
+
+                        color = Color {
+                            r: intersection.color.r * intensity,
+                            g: intersection.color.g * intensity,
+                            b: intersection.color.b * intensity,
+                        };
                     }
 
                     // Colors are 0.0..=1.0; the `as u8` cast saturates anything out of range.
