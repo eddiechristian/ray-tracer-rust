@@ -4,11 +4,13 @@ mod object_base;
 mod sphere;
 mod scene;
 
+use std::time::Instant;
+
 use pixels::{Pixels, SurfaceTexture};
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
-    event_loop::EventLoop,
+    event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
 
@@ -30,6 +32,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let scene = scene::Scene::new();
 
+    // Render continuously instead of only when an event arrives, so FPS is meaningful.
+    event_loop.set_control_flow(ControlFlow::Poll);
+
+    // FPS counter, shown in the window title and refreshed once per second.
+    let mut frame_count: u32 = 0;
+    let mut fps_timer = Instant::now();
+
     event_loop.run(move |event, elwt| {
         match event {
             Event::WindowEvent {
@@ -47,6 +56,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Err(err) = pixels.render() {
                     println!("Render error: {}", err);
                     elwt.exit();
+                }
+
+                // 4. Update the FPS display
+                frame_count += 1;
+                let elapsed = fps_timer.elapsed().as_secs_f64();
+                if elapsed >= 1.0 {
+                    let fps = frame_count as f64 / elapsed;
+                    window.set_title(&format!("Ray Tracer Framebuffer - {:.1} FPS ({:.1} ms/frame)", fps, 1000.0 / fps));
+                    frame_count = 0;
+                    fps_timer = Instant::now();
                 }
             }
             _ => {}
