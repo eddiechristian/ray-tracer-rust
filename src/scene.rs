@@ -6,13 +6,15 @@ use crate::cuboid::Cuboid;
 use crate::cylinder::Cylinder;
 use crate::cone::Cone;
 use crate::camera::Camera;
-use crate::object_base::Intersect;
+use crate::object_base::{Intersect, IntersectionResult};
+use crate::material::Material;
+use crate::texture::Checker;
 use crate::light_base::Illuminate;
 use crate::point_light::PointLight;
 use crate::ambient_light::AmbientLight;
-use crate::ray::Color;
+use crate::ray::{Color, Ray};
 use crate::transform::Transform;
-use nalgebra::{Point3, Vector3};
+use nalgebra::{Point3, Vector2, Vector3};
 
 pub struct Scene {
     pub camera: Camera,
@@ -63,16 +65,42 @@ impl Scene {
         Scene {
             camera: Camera::default(),
             objects: vec![
-                Box::new(Plane::new(floor, Color { r: 0.8, g: 0.8, b: 0.8 })),
-                Box::new(Sphere::new(sphere, Color { r: 1.0, g: 0.0, b: 0.0 })),
-                Box::new(Cuboid::new(cuboid, Color { r: 0.0, g: 1.0, b: 0.0 })),
-                Box::new(Cylinder::new(cylinder, Color { r: 0.2, g: 0.4, b: 1.0 })),
-                Box::new(Cone::new(cone, Color { r: 1.0, g: 0.8, b: 0.0 })),
-                Box::new(Plane::new(panel, Color { r: 1.0, g: 1.0, b: 1.0 })),
-                Box::new(Sphere::new(ellipsoid, Color { r: 1.0, g: 0.2, b: 0.8 })),
-                Box::new(Cuboid::new(tilted_cuboid, Color { r: 0.0, g: 0.9, b: 0.9 })),
-                Box::new(Cylinder::new(tilted_cylinder, Color { r: 1.0, g: 0.5, b: 0.0 })),
-                Box::new(Cone::new(tilted_cone, Color { r: 0.6, g: 0.3, b: 1.0 })),
+                // Reflective checkerboard floor, as in the C++ Ep10 scene.
+                Box::new(Plane::new(floor, Material::new(
+                    Checker::new(Color::new(1.0, 1.0, 1.0), Color::new(0.2, 0.2, 0.2))
+                        .with_transform(Vector2::zeros(), 0.0, Vector2::new(8.0, 8.0)),
+                ).with_reflectivity(0.25))),
+                // Glass: mostly refracted light (the floor seen through it, flipped), slight red tint.
+                Box::new(Sphere::new(sphere, Material::flat(Color::new(1.0, 0.6, 0.6))
+                    .with_reflectivity(0.1)
+                    .with_specular(1.0, 64.0)
+                    .with_translucency(0.8, 1.5))),
+                Box::new(Cuboid::new(cuboid, Material::new(
+                    Checker::new(Color::new(0.0, 1.0, 0.0), Color::new(0.0, 0.3, 0.0))
+                        .with_transform(Vector2::zeros(), 0.0, Vector2::new(2.0, 2.0)),
+                ))),
+                Box::new(Cylinder::new(cylinder, Material::flat(Color::new(0.2, 0.4, 1.0))
+                    .with_reflectivity(0.3)
+                    .with_specular(1.0, 32.0))),
+                Box::new(Cone::new(cone, Material::flat(Color::new(1.0, 0.8, 0.0))
+                    .with_specular(0.6, 16.0))),
+
+                Box::new(Plane::new(panel, Material::new(
+                    Checker::new(Color::new(1.0, 1.0, 1.0), Color::new(0.0, 0.0, 0.0))
+                        .with_transform(Vector2::zeros(), 0.0, Vector2::new(4.0, 4.0)),
+                ))),
+                Box::new(Sphere::new(ellipsoid, Material::flat(Color::new(1.0, 0.2, 0.8))
+                    .with_reflectivity(0.6)
+                    .with_specular(1.0, 32.0))),
+                Box::new(Cuboid::new(tilted_cuboid, Material::flat(Color::new(0.0, 0.9, 0.9))
+                    .with_specular(0.5, 8.0))),
+                // Checker on the side wraps around the axis: u is the angle, v the height.
+                Box::new(Cylinder::new(tilted_cylinder, Material::new(
+                    Checker::new(Color::new(1.0, 0.5, 0.0), Color::new(0.3, 0.1, 0.0))
+                        .with_transform(Vector2::zeros(), 0.0, Vector2::new(4.0, 2.0)),
+                ))),
+                Box::new(Cone::new(tilted_cone, Material::flat(Color::new(0.6, 0.3, 1.0))
+                    .with_specular(1.0, 32.0))),
             ],
             lights: vec![
                 Box::new(PointLight::new(Point3::new(5.0, -10.0, 5.0), 1.0)),
@@ -80,6 +108,27 @@ impl Scene {
             ],
             x_size: 1280,
             y_size: 720,
+        }
+    }
+
+    /// The closest object hit by `ray`, and where.
+    pub fn closest_hit(&self, ray: &Ray) -> Option<(&dyn Intersect, IntersectionResult)> {
+        self.objects
+            .iter()
+            .filter_map(|object| object.test_intersection(ray).map(|hit| (object.as_ref(), hit)))
+            .min_by(|(_, a), (_, b)| {
+                let dist_a = (a.intersection - ray.point1).norm_squared();
+                let dist_b = (b.intersection - ray.point1).norm_squared();
+                dist_a.total_cmp(&dist_b)
+            })
+    }
+
+    /// Color seen along `ray`. Materials call this recursively for reflections and
+    /// refraction, with `depth` counting the bounces so far.
+    pub fn trace(&self, ray: &Ray, depth: u32) -> Color {
+        match self.closest_hit(ray) {
+            Some((object, hit)) => object.material().compute_color(self, ray, &hit, depth),
+            None => Color::default(), // Background is black.
         }
     }
 
@@ -97,33 +146,7 @@ impl Scene {
                     let ray = self.camera.generate_ray(norm_x, norm_y);
                     let pixel_index = (((y * self.x_size) + x) * 4) as usize;
 
-                    // Background is black.
-                    let mut color = Color::default();
-
-                    // The visible object is the closest one the ray hits.
-                    let closest = self.objects
-                        .iter()
-                        .filter_map(|object| object.test_intersection(&ray))
-                        .min_by(|a, b| {
-                            let dist_a = (a.intersection - ray.point1).norm_squared();
-                            let dist_b = (b.intersection - ray.point1).norm_squared();
-                            dist_a.total_cmp(&dist_b)
-                        });
-
-                    if let Some(intersection) = closest {
-                        // Light contributions add up; lights that don't reach this point return None.
-                        let intensity: f64 = self.lights
-                            .iter()
-                            .filter_map(|light| light.compute_illumination(&intersection, &self.objects))
-                            .map(|illumination| illumination.intensity)
-                            .sum();
-
-                        color = Color {
-                            r: intersection.color.r * intensity,
-                            g: intersection.color.g * intensity,
-                            b: intersection.color.b * intensity,
-                        };
-                    }
+                    let color = self.trace(&ray, 0);
 
                     // Colors are 0.0..=1.0; the `as u8` cast saturates anything out of range.
                     buffer[pixel_index] = (color.r * 255.0) as u8; // R

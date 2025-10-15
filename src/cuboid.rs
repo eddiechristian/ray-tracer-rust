@@ -1,17 +1,18 @@
-use nalgebra::Vector3;
-use crate::ray::{Color, Ray};
+use nalgebra::{Vector2, Vector3};
+use crate::material::Material;
+use crate::ray::Ray;
 use crate::object_base::{Intersect, IntersectionResult, EPSILON};
 use crate::transform::Transform;
 
 // Local space: axis-aligned box from (-1,-1,-1) to (1,1,1).
 pub struct Cuboid {
     pub transform: Transform,
-    pub color: Color,
+    pub material: Material,
 }
 
 impl Cuboid {
-    pub fn new(transform: Transform, color: Color) -> Self {
-        Cuboid { transform, color }
+    pub fn new(transform: Transform, material: Material) -> Self {
+        Cuboid { transform, material }
     }
 }
 
@@ -47,10 +48,21 @@ impl Intersect for Cuboid {
         let mut local_normal = Vector3::zeros();
         local_normal[axis] = local_point[axis].signum();
 
+        // Each face uses the two local coordinates that vary across it.
+        let uv = match axis {
+            0 => Vector2::new(local_point.y, local_point.z),
+            1 => Vector2::new(local_point.x, local_point.z),
+            _ => Vector2::new(local_point.x, local_point.y),
+        };
+
         Some(IntersectionResult {
             intersection: self.transform.point_to_world(&local_point),
             local_normal: self.transform.normal_to_world(&local_normal),
-            color: self.color,
+            uv,
         })
+    }
+
+    fn material(&self) -> &Material {
+        &self.material
     }
 }

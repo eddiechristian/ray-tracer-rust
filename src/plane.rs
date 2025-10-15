@@ -1,17 +1,18 @@
-use nalgebra::Vector3;
-use crate::ray::{Color, Ray};
+use nalgebra::{Vector2, Vector3};
+use crate::material::Material;
+use crate::ray::Ray;
 use crate::object_base::{Intersect, IntersectionResult, EPSILON};
 use crate::transform::Transform;
 
 // Local space: the z = 0 plane, bounded to -1 <= x, y <= 1. Two-sided.
 pub struct Plane {
     pub transform: Transform,
-    pub color: Color,
+    pub material: Material,
 }
 
 impl Plane {
-    pub fn new(transform: Transform, color: Color) -> Self {
-        Plane { transform, color }
+    pub fn new(transform: Transform, material: Material) -> Self {
+        Plane { transform, material }
     }
 }
 
@@ -35,11 +36,16 @@ impl Intersect for Plane {
 
         // Normal faces back toward the incoming ray, so both sides can be lit.
         let local_normal = Vector3::new(0.0, 0.0, -v.z.signum());
+        let uv = Vector2::new(local_point.x, local_point.y);
 
         Some(IntersectionResult {
             intersection: self.transform.point_to_world(&local_point),
             local_normal: self.transform.normal_to_world(&local_normal),
-            color: self.color,
+            uv,
         })
+    }
+
+    fn material(&self) -> &Material {
+        &self.material
     }
 }

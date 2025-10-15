@@ -1,16 +1,20 @@
-use crate::ray::{Color, Ray};
+use std::f64::consts::PI;
+
+use nalgebra::Vector2;
+use crate::material::Material;
+use crate::ray::Ray;
 use crate::object_base::{Intersect, IntersectionResult, EPSILON};
 use crate::transform::Transform;
 
 // Local space: unit sphere, centre (0,0,0), radius 1.
 pub struct Sphere {
     pub transform: Transform,
-    pub color: Color,
+    pub material: Material,
 }
 
 impl Sphere {
-    pub fn new(transform: Transform, color: Color) -> Self {
-        Sphere { transform, color }
+    pub fn new(transform: Transform, material: Material) -> Self {
+        Sphere { transform, material }
     }
 }
 
@@ -35,10 +39,18 @@ impl Intersect for Sphere {
         // On a unit sphere at the origin, position == normal.
         let local_point = p + v * t;
 
+        // Spherical coordinates scaled to [0, 1] and [-1, 1], as in the C++ ObjSphere.
+        let (x, y, z) = (local_point.x, local_point.y, local_point.z);
+        let uv = Vector2::new((x * x + y * y).sqrt().atan2(z) / PI, y.atan2(x) / PI);
+
         Some(IntersectionResult {
             intersection: self.transform.point_to_world(&local_point),
             local_normal: self.transform.normal_to_world(&local_point),
-            color: self.color,
+            uv,
         })
+    }
+
+    fn material(&self) -> &Material {
+        &self.material
     }
 }

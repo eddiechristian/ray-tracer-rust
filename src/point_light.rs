@@ -52,6 +52,7 @@ impl Illuminate for PointLight {
 
      Some(IlluminationResult {
         intensity: self.intensity * (1.0 - (angle / FRAC_PI_2)),
+        direction: Some(light_dir),
      })
   }
 }

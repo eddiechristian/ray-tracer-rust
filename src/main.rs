@@ -7,6 +7,8 @@ mod cuboid;
 mod cylinder;
 mod cone;
 mod transform;
+mod material;
+mod texture;
 mod scene;
 mod point_light;
 mod ambient_light;

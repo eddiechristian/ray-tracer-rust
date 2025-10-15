@@ -16,6 +16,6 @@ impl AmbientLight {
 
 impl Illuminate for AmbientLight {
   fn compute_illumination(&self, _intersection_result: &IntersectionResult, _objects: &[Box<dyn Intersect>]) -> Option<IlluminationResult>{
-     Some(IlluminationResult { intensity: self.intensity })
+     Some(IlluminationResult { intensity: self.intensity, direction: None })
   }
 }
