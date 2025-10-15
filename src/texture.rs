@@ -2,7 +2,7 @@ use nalgebra::{Matrix3, Point2, Vector2};
 use crate::ray::Color;
 
 // A texture maps a surface (u, v) coordinate, as computed by each shape, to a color.
-pub trait Texture {
+pub trait Texture: Send + Sync {
     fn color(&self, uv: &Vector2<f64>) -> Color;
 }
 

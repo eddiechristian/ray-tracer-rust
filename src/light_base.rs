@@ -10,7 +10,7 @@ pub struct IlluminationResult {
     pub direction: Option<Vector3<f64>>,
 }
 
-pub trait Illuminate {
+pub trait Illuminate: Send + Sync {
     /// `objects` is the whole scene, so lights can check whether anything casts a shadow.
     fn compute_illumination(&self, intersection_result: &IntersectionResult, objects: &[Box<dyn Intersect>]) -> Option<IlluminationResult>;
 }

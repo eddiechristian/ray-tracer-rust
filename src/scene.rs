@@ -16,6 +16,7 @@ use crate::ambient_light::AmbientLight;
 use crate::ray::{Color, Ray};
 use crate::transform::Transform;
 use nalgebra::{Point3, Vector2, Vector3};
+use rayon::prelude::*;
 
 pub struct Scene {
     pub camera: Camera,
@@ -143,24 +144,28 @@ impl Scene {
         let x_fact: f64 = 2.0 / self.x_size as f64;
         let y_fact: f64 = 2.0 / self.y_size as f64;
 
-        for y in 0..self.y_size {
-              for x in 0..self.x_size {
+        // Each row is independent, so rows are traced in parallel across all CPU cores.
+        let row_bytes = (self.x_size * 4) as usize;
+        buffer
+            .par_chunks_exact_mut(row_bytes)
+            .enumerate()
+            .for_each(|(y, row)| {
+                // Buffer row 0 is the top of the window, but +v on the projection screen is up.
+                let norm_y: f64 = 1.0 - y as f64 * y_fact;
+
+                for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
                     let norm_x: f64 = x as f64 * x_fact - 1.0;
-                    // Buffer row 0 is the top of the window, but +v on the projection screen is up.
-                    let norm_y: f64 = 1.0 - y as f64 * y_fact;
                     let ray = self.camera.generate_ray(norm_x, norm_y);
-                    let pixel_index = (((y * self.x_size) + x) * 4) as usize;
 
                     let color = self.trace(&ray, 0);
 
                     // Colors are 0.0..=1.0; the `as u8` cast saturates anything out of range.
-                    buffer[pixel_index] = (color.r * 255.0) as u8; // R
-                    buffer[pixel_index + 1] = (color.g * 255.0) as u8; // G
-                    buffer[pixel_index + 2] = (color.b * 255.0) as u8; // B
-                    buffer[pixel_index + 3] = 255; // A
-              }
-        }
-
+                    pixel[0] = (color.r * 255.0) as u8; // R
+                    pixel[1] = (color.g * 255.0) as u8; // G
+                    pixel[2] = (color.b * 255.0) as u8; // B
+                    pixel[3] = 255; // A
+                }
+            });
     }
 }
 

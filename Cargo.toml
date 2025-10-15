@@ -9,6 +9,12 @@ edition = "2021"
 nalgebra = "0.35.0"
 # The hardware-accelerated pixel buffer
 pixels = "0.13.0"
+rayon = "1.12.0"
 
 # Window creation and event handling (pinned to 0.29 for the loop style used above)
 winit = { version = "0.29.15", features = ["rwh_05"] }
+
+# Ray tracing is pure number-crunching: unoptimized builds run ~45x slower (55+ s per frame),
+# so optimize debug builds too. Debug info and debug assertions are kept.
+[profile.dev]
+opt-level = 2

@@ -16,7 +16,8 @@ pub struct IntersectionResult<'a> {
     pub material: &'a Material,
 }
 
-pub trait Intersect {
+// Send + Sync so the scene can be shared by the parallel render threads.
+pub trait Intersect: Send + Sync {
     fn test_intersection(&self, ray: &Ray) -> Option<IntersectionResult<'_>>;
     /// Bounding box in the parent's coordinate space (world space for top-level objects).
     fn bounds(&self) -> Aabb;

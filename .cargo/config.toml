@@ -1,0 +1,4 @@
+# Let the compiler use every instruction set this CPU supports (e.g. AVX2, FMA) for the f64 math.
+# The resulting binary may not run on older CPUs; delete this to build portable binaries.
+[build]
+rustflags = ["-C", "target-cpu=native"]

@@ -29,7 +29,46 @@ use winit::{
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
 
+/// Renders `frames` frames off-screen and prints timing; no window is opened.
+/// Usage: `cargo run --release -- --bench [frames]` (default 10).
+fn run_benchmark(frames: u32) {
+    let scene = scene::Scene::new();
+    let mut buffer = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
+
+    // One untimed warm-up frame (page faults, thread pool start-up, caches).
+    scene.render(&mut buffer);
+
+    let mut times_ms: Vec<f64> = (0..frames)
+        .map(|_| {
+            let start = Instant::now();
+            scene.render(&mut buffer);
+            start.elapsed().as_secs_f64() * 1000.0
+        })
+        .collect();
+    times_ms.sort_by(f64::total_cmp);
+
+    let mean = times_ms.iter().sum::<f64>() / times_ms.len() as f64;
+    println!(
+        "{} frames at {}x{}: mean {:.1} ms ({:.2} FPS), min {:.1} ms, median {:.1} ms, max {:.1} ms",
+        frames, WIDTH, HEIGHT, mean, 1000.0 / mean,
+        times_ms[0], times_ms[times_ms.len() / 2], times_ms[times_ms.len() - 1],
+    );
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--bench") {
+        let frames = match args.get(2) {
+            Some(n) => n.parse().map_err(|_| format!("--bench expects a frame count, got '{n}'"))?,
+            None => 10,
+        };
+        if frames == 0 {
+            return Err("--bench frame count must be at least 1".into());
+        }
+        run_benchmark(frames);
+        return Ok(());
+    }
+
     let event_loop = EventLoop::new()?;
     let window = WindowBuilder::new()
         .with_title("Ray Tracer Framebuffer")

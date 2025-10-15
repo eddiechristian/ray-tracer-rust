@@ -16,18 +16,21 @@ A Rust port of the QuantitativeBytes "qbRayTrace" C++/SDL2 YouTube series, done 
 ## Commands
 
 ```bash
-cargo build            # build
-cargo run --release    # open the 1280x720 window and render; use release, since the debug build re-renders slowly
-cargo clippy           # lint
-cargo test             # no tests exist yet; use `cargo test <name>` to run one test
+cargo build                               # dev profile is optimized (opt-level 2); unoptimized is ~45x slower
+cargo run --release                       # open the 1280x720 window and render
+cargo run --release -- --bench [frames]   # time N off-screen renders (default 10), no window
+cargo clippy                              # lint
+cargo test                                # no tests exist yet; use `cargo test <name>` to run one test
 ```
+
+`.cargo/config.toml` sets `target-cpu=native`, so binaries may not run on other CPUs. `plan.md` holds the performance plan and the measured results so far. Use `--bench` to check for regressions after changing hot code.
 
 Running the binary needs a display: `winit` opens a window and `pixels` (wgpu) needs a GPU or software adapter.
 
 ## Architecture
 
-- `main.rs`: sets up the `winit` 0.29 event loop and the `pixels` framebuffer. On every `Event::AboutToWait` it calls `scene.render(frame)`, which re-traces the whole image each iteration (no caching). `winit` is pinned to 0.29 with the `rwh_05` feature so it works with `pixels` 0.13. Don't bump either crate on its own.
-- `scene.rs`: `Scene` owns the camera, a `Vec<Box<dyn Intersect>>` of objects, and a `Vec<Box<dyn Illuminate>>` of lights. `render` maps each pixel to normalized screen coords in [-1, 1] (y flipped, because buffer row 0 is the top), generates a camera ray, and calls `trace`. `trace` finds the `closest_hit` and asks that object's material for its colour. Materials call `scene.trace` again for reflection and refraction, so rendering is recursive, limited by `MAX_DEPTH`. Colours are 0.0..=1.0, and the cast to `u8` saturates anything outside that range.
+- `main.rs`: sets up the `winit` 0.29 event loop and the `pixels` framebuffer. On every `Event::AboutToWait` it calls `scene.render(frame)`, which re-traces the whole image each iteration. This is intended: the camera and objects will move, so there is no caching. `winit` is pinned to 0.29 with the `rwh_05` feature so it works with `pixels` 0.13. Don't bump either crate on its own.
+- `scene.rs`: `Scene` owns the camera, a `Vec<Box<dyn Intersect>>` of objects, and a `Vec<Box<dyn Illuminate>>` of lights. `render` traces rows in parallel with `rayon` (`par_chunks_exact_mut`), which is why `Intersect`, `Illuminate` and `Texture` require `Send + Sync`. It maps each pixel to normalized screen coords in [-1, 1] (y flipped, because buffer row 0 is the top), generates a camera ray, and calls `trace`. `trace` finds the `closest_hit` and asks that object's material for its colour. Materials call `scene.trace` again for reflection and refraction, so rendering is recursive, limited by `MAX_DEPTH`. Colours are 0.0..=1.0, and the cast to `u8` saturates anything outside that range.
 - `camera.rs`: pinhole camera that mirrors the C++ `qbRT::Camera`. `Default` precomputes the alignment vector and the projection-screen U/V/centre. The default position is `(0, -10, 0)` looking at the origin, with **Z as up**. The view is narrow: about x in [-2.5, 2.5] and z in [-1.4, 1.4] at the origin. `generate_ray` builds a ray from the camera position through a point on the projection screen.
 - `object_base.rs`: the `Intersect` trait.
   - `test_intersection(&Ray) -> Option<IntersectionResult<'_>>` returns the world hit point, a unit outward normal, the surface `uv`, and a `&Material` borrowed from the shape that was hit (for a composite, the sub-shape).
