@@ -16,7 +16,10 @@ mod point_light;
 mod ambient_light;
 mod light_base;
 
+use std::f64::consts::TAU;
 use std::time::Instant;
+
+use nalgebra::Vector3;
 
 use pixels::{Pixels, SurfaceTexture};
 use winit::{
@@ -28,6 +31,18 @@ use winit::{
 
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 720;
+
+// The camera circles the scene's centre once every ORBIT_PERIOD_SECS, starting from the default
+// camera position (same radius and height), always looking at the centre.
+const ORBIT_PERIOD_SECS: f64 = 30.0;
+
+/// Camera position at `angle` radians around `center`, given the starting position at angle 0.
+/// Rotates about the vertical (z) axis, so the height stays the same.
+fn orbit_position(center: Vector3<f64>, start: Vector3<f64>, angle: f64) -> Vector3<f64> {
+    let offset = start - center;
+    let (sin, cos) = angle.sin_cos();
+    center + Vector3::new(offset.x * cos - offset.y * sin, offset.x * sin + offset.y * cos, offset.z)
+}
 
 /// Renders `frames` frames off-screen and prints timing; no window is opened.
 /// Usage: `cargo run --release -- --bench [frames]` (default 10).
@@ -81,7 +96,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Pixels::new(WIDTH, HEIGHT, surface_texture)?
     };
 
-    let scene = scene::Scene::new();
+    let mut scene = scene::Scene::new();
+    let orbit_center = scene.camera.look_at();
+    let orbit_start = scene.camera.position();
+    let orbit_timer = Instant::now();
 
     // Render continuously instead of only when an event arrives, so FPS is meaningful.
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -97,6 +115,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } => elwt.exit(),
             Event::AboutToWait => {
+                // 0. Move the camera along its orbit. Based on elapsed time, so the speed
+                //    doesn't depend on the frame rate.
+                let angle = orbit_timer.elapsed().as_secs_f64() / ORBIT_PERIOD_SECS * TAU;
+                scene.camera.set_position(orbit_position(orbit_center, orbit_start, angle));
+
                 // 1. Get a mutable slice of your entire screen buffer
                 let frame: &mut [u8] = pixels.frame_mut();
 

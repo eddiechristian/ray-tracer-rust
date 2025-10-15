@@ -1,57 +1,112 @@
 use nalgebra::Vector3;
 use crate::ray::Ray;
 
+// Pinhole camera, as in the C++ qbRT::Camera. The projection screen sits `length` in front of
+// the camera; `horiz_size` is its half-width and `aspect_ratio` sets its half-height.
+//
+// The fields are private: every setter recomputes the projection-screen geometry (the C++
+// UpdateCameraGeometry), so it can't go stale when the camera moves.
 pub struct Camera {
-    pub position: Vector3<f64>,
-    pub look_at: Vector3<f64>,
-    pub up: Vector3<f64>,
-    pub length: f64,
-    pub horiz_size: f64,
-    pub aspect_ratio: f64,
-    pub alignment_vec: Vector3<f64>,
-    pub proj_screen_u: Vector3<f64>,
-    pub proj_screen_v: Vector3<f64>,
-    pub proj_screen_center: Vector3<f64>,
+    position: Vector3<f64>,
+    look_at: Vector3<f64>,
+    up: Vector3<f64>,
+    length: f64,
+    horiz_size: f64,
+    aspect_ratio: f64,
+
+    // Derived by `update_geometry`:
+    alignment_vec: Vector3<f64>,
+    proj_screen_u: Vector3<f64>,
+    proj_screen_v: Vector3<f64>,
+    proj_screen_center: Vector3<f64>,
 }
 
 pub const DEFAULT_POS: Vector3<f64> = Vector3::new(0.0, -10.0, 0.0);
 pub const DEFAULT_LOOK_AT: Vector3<f64> = Vector3::new(0.0, 0.0, 0.0);
+pub const DEFAULT_UP: Vector3<f64> = Vector3::new(0.0, 0.0, 1.0);
 pub const DEFAULT_HORIZ_SZ: f64 = 0.35;
 pub const DEFAULT_CAMERA_LEN: f64 = 1.0;
 pub const DEFAULT_ASPECT_RATIO: f64 = 1280.0/ 720.0;
 
 impl Default for Camera {
     fn default() -> Self {
-        let align_vec: Vector3<f64> = (DEFAULT_LOOK_AT - DEFAULT_POS).normalize();
-        let camera_up: Vector3<f64> = Vector3::new(0.0, 0.0, 1.0);
-        let screen_u = align_vec.cross(&camera_up).normalize();
-        let screen_v = screen_u.cross(&align_vec);
-
-        Camera {
-            position: DEFAULT_POS,
-            look_at: DEFAULT_LOOK_AT,
-            up: camera_up,
-            length: DEFAULT_CAMERA_LEN,
-            horiz_size: DEFAULT_HORIZ_SZ,
-            aspect_ratio: DEFAULT_ASPECT_RATIO,
-            alignment_vec: align_vec,
-            proj_screen_u: screen_u * DEFAULT_HORIZ_SZ,
-            proj_screen_v: screen_v * (DEFAULT_HORIZ_SZ / DEFAULT_ASPECT_RATIO),
-            proj_screen_center: DEFAULT_POS + (DEFAULT_CAMERA_LEN * align_vec),
-        }
+        Camera::new(DEFAULT_POS, DEFAULT_LOOK_AT, DEFAULT_UP)
     }
 }
 
-
 impl Camera {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(position: Vector3<f64>, look_at: Vector3<f64>, up: Vector3<f64>) -> Self {
+        let mut camera = Camera {
+            position,
+            look_at,
+            up,
+            length: DEFAULT_CAMERA_LEN,
+            horiz_size: DEFAULT_HORIZ_SZ,
+            aspect_ratio: DEFAULT_ASPECT_RATIO,
+            alignment_vec: Vector3::zeros(),
+            proj_screen_u: Vector3::zeros(),
+            proj_screen_v: Vector3::zeros(),
+            proj_screen_center: Vector3::zeros(),
+        };
+        camera.update_geometry();
+        camera
     }
+
+    pub fn position(&self) -> Vector3<f64> {
+        self.position
+    }
+
+    pub fn look_at(&self) -> Vector3<f64> {
+        self.look_at
+    }
+
+    pub fn set_position(&mut self, position: Vector3<f64>) {
+        self.position = position;
+        self.update_geometry();
+    }
+
+    pub fn set_look_at(&mut self, look_at: Vector3<f64>) {
+        self.look_at = look_at;
+        self.update_geometry();
+    }
+
+    pub fn set_up(&mut self, up: Vector3<f64>) {
+        self.up = up;
+        self.update_geometry();
+    }
+
+    /// Distance from the camera to the projection screen; with `horiz_size`, sets the field of view.
+    pub fn set_length(&mut self, length: f64) {
+        self.length = length;
+        self.update_geometry();
+    }
+
+    pub fn set_horiz_size(&mut self, horiz_size: f64) {
+        self.horiz_size = horiz_size;
+        self.update_geometry();
+    }
+
+    pub fn set_aspect_ratio(&mut self, aspect_ratio: f64) {
+        self.aspect_ratio = aspect_ratio;
+        self.update_geometry();
+    }
+
+    /// Recompute the projection screen from position, look-at, up and the screen size.
+    fn update_geometry(&mut self) {
+        self.alignment_vec = (self.look_at - self.position).normalize();
+        let screen_u = self.alignment_vec.cross(&self.up).normalize();
+        let screen_v = screen_u.cross(&self.alignment_vec);
+
+        self.proj_screen_u = screen_u * self.horiz_size;
+        self.proj_screen_v = screen_v * (self.horiz_size / self.aspect_ratio);
+        self.proj_screen_center = self.position + (self.length * self.alignment_vec);
+    }
+
     pub fn generate_ray(&self, proj_screen_x: f64, proj_screen_y: f64)->Ray
     {
         let screen_world_part1 = self.proj_screen_center + (self.proj_screen_u * proj_screen_x);
         let screen_world_coordinate = screen_world_part1 + (self.proj_screen_v * proj_screen_y);
-        
+
         // Compute the line of sight vector (lab)
         let lab = screen_world_coordinate - self.position;
 
