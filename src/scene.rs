@@ -141,7 +141,7 @@ impl Scene {
         objects.push(Box::new(spray_can(
             Transform::new(can_position, Vector3::repeat(can_scale)),
             Color::new(0.9, 0.1, 0.1),
-            0.85, // mostly see-through so the axis arrows inside are visible
+            0.0, // opaque
         )));
         objects.push(Box::new(spray_can(tilted_can, Color::new(0.1, 0.3, 0.9), 0.0)));
 
