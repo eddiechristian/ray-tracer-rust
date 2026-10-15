@@ -30,6 +30,10 @@ pub struct Scene {
     pub pivot_marker: usize,
     /// Whether the pivot axis frame is rendered.
     pub axes_visible: bool,
+    /// Index of the orange checker cylinder that spins in place.
+    pub spinning_cylinder: usize,
+    /// Axis-arrow frame attached to the spinning cylinder.
+    pub cylinder_axes: usize,
 }
 
 /// An object standing on the floor that rocks from side to side, tipping onto the edge of
@@ -180,6 +184,23 @@ impl Scene {
         )));
         objects.push(Box::new(spray_can(tilted_can, Color::new(0.1, 0.3, 0.9), 0.0)));
 
+        // Axis-arrow frame for the spinning cylinder — same position, rotates with it.
+        let cylinder_axes = objects.len();
+        {
+            let cyl_pos = Vector3::new(0.95, 0.0, 0.75);
+            let mut x_t = Transform::new(Vector3::zeros(), Vector3::repeat(1.0));
+            x_t.set_rotation_euler(0.0, FRAC_PI_2, 0.0);
+            let mut y_t = Transform::new(Vector3::zeros(), Vector3::repeat(1.0));
+            y_t.set_rotation_euler(-FRAC_PI_2, 0.0, 0.0);
+            let z_t = Transform::new(Vector3::zeros(), Vector3::repeat(1.0));
+            objects.push(Box::new(
+                AxesFrame::new(Transform::new(cyl_pos, Vector3::repeat(0.5)))
+                    .with_shape(arrow(x_t, Color::new(1.0, 0.1, 0.1)))
+                    .with_shape(arrow(y_t, Color::new(0.1, 0.9, 0.1)))
+                    .with_shape(arrow(z_t, Color::new(0.1, 0.4, 1.0))),
+            ));
+        }
+
         // Axis-arrow frame at the rim contact (pivot) point. Only the translation is updated
         // each frame; the rotation stays identity so the arrows always point along world axes.
         // Scale 0.5 matches the world size of the can's own axis arrows.
@@ -212,6 +233,9 @@ impl Scene {
             wobble,
             pivot_marker,
             axes_visible: true,
+            // The tilted orange checker cylinder is the 9th object pushed into the vec (index 8).
+            spinning_cylinder: 8,
+            cylinder_axes,
         }
     }
 
@@ -240,6 +264,27 @@ impl Scene {
             let pm = pm_obj.transform_mut();
             pm.set_rotation(rotation);
             pm.set_translation(Vector3::new(pivot.x, pivot.y, w.rest_position.z + 0.03));
+        }
+
+        // Spin the orange checker cylinder around its own axis (one revolution every 4 s).
+        // Compose the fixed tilt with a time-varying Z rotation so the tilt is preserved.
+        // spin_z: continuous longitudinal spin (checker pattern rotates around cylinder axis).
+        // spin_x: outer world-X rotation applied after the tilt+spin, so the whole
+        //         spinning cylinder tilts around X without disturbing the longitudinal spin.
+        let tilt   = UnitQuaternion::from_euler_angles(PI / 3.0, 0.0, FRAC_PI_6);
+        let spin_z = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), time * TAU / 4.0);
+        let spin_x = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), time * TAU / 15.0);
+        self.objects.get_mut(self.spinning_cylinder)
+            .expect("spinning cylinder")
+            .transform_mut()
+            .set_rotation(spin_x * tilt * spin_z);
+
+        // Cylinder axes: same rotation as the cylinder, visibility follows axes_visible.
+        {
+            let ca = self.objects.get_mut(self.cylinder_axes)
+                .expect("cylinder axes");
+            ca.set_visible(self.axes_visible);
+            ca.transform_mut().set_rotation(spin_x * tilt * spin_z);
         }
 
         self.objects.refresh_bounds();
