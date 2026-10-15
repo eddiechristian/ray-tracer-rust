@@ -25,6 +25,8 @@ pub struct Scene {
     pub x_size: u32,
     pub y_size: u32,
     pub wobble: Wobble,
+    /// Axis-arrow frame that tracks the rim's floor-contact (pivot) point each frame.
+    pub pivot_marker: usize,
 }
 
 /// An object standing on the floor that rocks from side to side, tipping onto the edge of
@@ -133,14 +135,35 @@ impl Scene {
             object: objects.len(),
             rest_position: can_position,
             base_radius: SPRAY_CAN_RADIUS * can_scale,
-            amplitude: 12.0_f64.to_radians(),
-            frequency: 0.8,
+            amplitude: 15.0_f64.to_radians(),
+            frequency: 0.2, // slowed for axis-arrow inspection; was 0.8
         };
         objects.push(Box::new(spray_can(
             Transform::new(can_position, Vector3::repeat(can_scale)),
             Color::new(0.9, 0.1, 0.1),
+            0.85, // mostly see-through so the axis arrows inside are visible
         )));
-        objects.push(Box::new(spray_can(tilted_can, Color::new(0.1, 0.3, 0.9))));
+        objects.push(Box::new(spray_can(tilted_can, Color::new(0.1, 0.3, 0.9), 0.0)));
+
+        // Axis-arrow frame at the rim contact (pivot) point. Only the translation is updated
+        // each frame; the rotation stays identity so the arrows always point along world axes.
+        // Scale 0.5 matches the world size of the can's own axis arrows.
+        // Raised 0.03 above the floor so X/Y arrow shafts aren't clipped by the floor plane.
+        let pivot_marker = objects.len();
+        {
+            let mut x_t = Transform::new(Vector3::zeros(), Vector3::repeat(1.0));
+            x_t.set_rotation_euler(0.0, FRAC_PI_2, 0.0);
+            let mut y_t = Transform::new(Vector3::zeros(), Vector3::repeat(1.0));
+            y_t.set_rotation_euler(-FRAC_PI_2, 0.0, 0.0);
+            let z_t = Transform::new(Vector3::zeros(), Vector3::repeat(1.0));
+            let pivot_pos = Vector3::new(can_position.x, can_position.y, can_position.z + 0.03);
+            objects.push(Box::new(
+                Composite::new(Transform::new(pivot_pos, Vector3::repeat(0.5)))
+                    .with_shape(arrow(x_t, Color::new(1.0, 0.1, 0.1)))
+                    .with_shape(arrow(y_t, Color::new(0.1, 0.9, 0.1)))
+                    .with_shape(arrow(z_t, Color::new(0.1, 0.4, 1.0))),
+            ));
+        }
 
         Scene {
             camera: Camera::default(),
@@ -152,6 +175,7 @@ impl Scene {
             x_size: 1280,
             y_size: 720,
             wobble,
+            pivot_marker,
         }
     }
 
@@ -171,6 +195,17 @@ impl Scene {
         let transform = self.objects.get_mut(w.object).expect("wobble object index").transform_mut();
         transform.set_rotation(rotation);
         transform.set_translation(position);
+
+        // Move the pivot axis frame to the rim contact point and match the can's rotation.
+        // The Y arrow stays horizontal (Y-axis rotation doesn't move Y), while X and Z tilt
+        // with the can — showing exactly what the rotation is doing.
+        {
+            let pm = self.objects.get_mut(self.pivot_marker)
+                .expect("pivot marker index")
+                .transform_mut();
+            pm.set_rotation(rotation);
+            pm.set_translation(Vector3::new(pivot.x, pivot.y, w.rest_position.z + 0.03));
+        }
 
         self.objects.refresh_bounds();
     }
@@ -223,7 +258,8 @@ impl Scene {
 
 /// A spray can built from three shapes, as in the C++ qbRayTrace2 composite example.
 /// Local space: base at the origin, standing 2.7 tall along +z with radius 0.4.
-fn spray_can(transform: Transform, body_color: Color) -> Composite {
+/// `body_translucency` 0.0 = opaque, 0.85 = mostly see-through (IOR 1.1, minimal distortion).
+fn spray_can(transform: Transform, body_color: Color, body_translucency: f64) -> Composite {
     let body = Transform::new(Vector3::new(0.0, 0.0, 1.0), Vector3::new(SPRAY_CAN_RADIUS, SPRAY_CAN_RADIUS, 1.0));
 
     // Cone flipped to point up, with its base sitting on top of the body.
@@ -232,15 +268,49 @@ fn spray_can(transform: Transform, body_color: Color) -> Composite {
 
     let nozzle = Transform::new(Vector3::new(0.0, 0.0, 2.55), Vector3::new(0.12, 0.12, 0.15));
 
+    let body_mat = Material::flat(body_color)
+        .with_reflectivity(0.15)
+        .with_specular(1.0, 32.0)
+        .with_translucency(body_translucency, 1.1);
+
     Composite::new(transform)
-        .with_shape(Cylinder::new(body, Material::flat(body_color)
-            .with_reflectivity(0.15)
-            .with_specular(1.0, 32.0)))
+        .with_shape(Cylinder::new(body, body_mat))
         .with_shape(Cone::new(shoulder, Material::flat(Color::new(0.7, 0.7, 0.7))
             .with_reflectivity(0.6)
             .with_specular(1.0, 64.0)))
         .with_shape(Cylinder::new(nozzle, Material::flat(Color::new(0.95, 0.95, 0.95))
             .with_specular(0.5, 16.0)))
+}
+
+/// A cylinder-shaft + cone-tip arrow along the composite's local +Z axis.
+/// Shaft runs z ∈ [0, SHAFT_LEN]; tip apex is at z = SHAFT_LEN + TIP_LEN.
+fn arrow(transform: Transform, color: Color) -> Composite {
+    const SHAFT_LEN: f64 = 0.8;
+    const SHAFT_R:   f64 = 0.06;
+    const TIP_LEN:   f64 = 0.25;
+    const TIP_R:     f64 = 0.16;
+
+    // Cylinder spans z ∈ [-1, 1] in local space; shift its centre to SHAFT_LEN/2 so it
+    // runs from 0 to SHAFT_LEN in the arrow's local space.
+    let shaft_t = Transform::new(
+        Vector3::new(0.0, 0.0, SHAFT_LEN / 2.0),
+        Vector3::new(SHAFT_R, SHAFT_R, SHAFT_LEN / 2.0),
+    );
+
+    // Cone: apex at z = 0 (local), base at z = 1 (local). Rotating PI about X negates z,
+    // so the base ends up at z = -TIP_LEN (local after scale) and the apex stays at z = 0.
+    // Translating to z = SHAFT_LEN + TIP_LEN puts:
+    //   apex  at z = SHAFT_LEN + TIP_LEN  (the arrow tip)
+    //   base  at z = SHAFT_LEN            (flush with the shaft top)
+    let mut tip_t = Transform::new(
+        Vector3::new(0.0, 0.0, SHAFT_LEN + TIP_LEN),
+        Vector3::new(TIP_R, TIP_R, TIP_LEN),
+    );
+    tip_t.set_rotation_euler(PI, 0.0, 0.0);
+
+    Composite::new(transform)
+        .with_shape(Cylinder::new(shaft_t, Material::flat(color).with_specular(0.8, 32.0)))
+        .with_shape(Cone::new(tip_t, Material::flat(color).with_specular(0.8, 32.0)))
 }
 
 #[cfg(test)]

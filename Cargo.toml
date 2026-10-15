@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 nalgebra = "0.35.0"
+embedded-graphics = "0.8"
 # The hardware-accelerated pixel buffer
 pixels = "0.13.0"
 rayon = "1.12.0"

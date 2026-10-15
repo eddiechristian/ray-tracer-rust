@@ -1,5 +1,6 @@
 mod camera;
 mod ray;
+mod ui;
 mod object_base;
 mod sphere;
 mod plane;
@@ -24,7 +25,7 @@ use nalgebra::Vector3;
 use pixels::{Pixels, SurfaceTexture};
 use winit::{
     dpi::PhysicalSize,
-    event::{Event, WindowEvent},
+    event::{ElementState, Event, MouseButton, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
@@ -101,6 +102,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let orbit_start = scene.camera.position();
     let start_time = Instant::now();
 
+    let mut orbit_enabled = true;
+    let mut cursor_pos = (0.0f64, 0.0f64);
+    let mut orbit_time = 0.0f64; // advances only while orbit is enabled
+    let mut last_wall_time = 0.0f64;
+
+    // Buttons — add more here as needed.
+    let mut orbit_btn = ui::Button::new("ORBIT: ON", 10, 10, 110, 26);
+
     // Render continuously instead of only when an event arrives, so FPS is meaningful.
     event_loop.set_control_flow(ControlFlow::Poll);
 
@@ -114,12 +123,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 event: WindowEvent::CloseRequested,
                 ..
             } => elwt.exit(),
+            Event::WindowEvent {
+                event: WindowEvent::CursorMoved { position, .. },
+                ..
+            } => {
+                cursor_pos = (position.x, position.y);
+            }
+            Event::WindowEvent {
+                event: WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button: MouseButton::Left,
+                    ..
+                },
+                ..
+            } => {
+                let (cx, cy) = cursor_pos;
+                if orbit_btn.contains(cx, cy) {
+                    orbit_enabled = !orbit_enabled;
+                }
+                // Add more button hit-tests here.
+            }
             Event::AboutToWait => {
                 // 0. Move the camera along its orbit and animate the objects. Based on elapsed
                 //    time, so the speed doesn't depend on the frame rate.
                 let time = start_time.elapsed().as_secs_f64();
-                let angle = time / ORBIT_PERIOD_SECS * TAU;
-                scene.camera.set_position(orbit_position(orbit_center, orbit_start, angle));
+                let dt = time - last_wall_time;
+                last_wall_time = time;
+                if orbit_enabled {
+                    orbit_time += dt;
+                    let angle = orbit_time / ORBIT_PERIOD_SECS * TAU;
+                    scene.camera.set_position(orbit_position(orbit_center, orbit_start, angle));
+                }
                 scene.animate(time);
 
                 // 1. Get a mutable slice of your entire screen buffer
@@ -127,6 +161,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // 2. Ray trace the scene into the buffer
                 scene.render(frame);
+
+                // 2b. Draw UI buttons on top of the rendered image.
+                orbit_btn.label = if orbit_enabled { "ORBIT: ON".into() } else { "ORBIT: OFF".into() };
+                orbit_btn.active = orbit_enabled;
+                orbit_btn.draw(frame, WIDTH, HEIGHT);
+                // Add more btn.draw() calls here.
 
                 // 3. Render the frame to the window
                 if let Err(err) = pixels.render() {
@@ -139,7 +179,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let elapsed = fps_timer.elapsed().as_secs_f64();
                 if elapsed >= 1.0 {
                     let fps = frame_count as f64 / elapsed;
-                    window.set_title(&format!("Ray Tracer Framebuffer - {:.1} FPS ({:.1} ms/frame)", fps, 1000.0 / fps));
+                    let orbit_str = if orbit_enabled { "ON" } else { "OFF" };
+                    window.set_title(&format!("Ray Tracer - {:.1} FPS | Orbit: {orbit_str} (click green/red square to toggle)", fps));
                     frame_count = 0;
                     fps_timer = Instant::now();
                 }
