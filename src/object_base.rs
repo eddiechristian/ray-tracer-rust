@@ -40,6 +40,9 @@ pub trait Intersect: Send + Sync {
     fn children_mut(&mut self) -> Option<&mut ObjectList> {
         None
     }
+    /// Show or hide this object. Default no-op (always visible).
+    /// Override in types that support toggling (e.g. `AxesFrame`).
+    fn set_visible(&mut self, _visible: bool) {}
 }
 
 /// A list of objects with each one's bounding box cached, so rays can skip objects whose

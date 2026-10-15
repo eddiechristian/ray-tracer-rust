@@ -13,6 +13,7 @@ use crate::texture::Checker;
 use crate::light_base::Illuminate;
 use crate::point_light::PointLight;
 use crate::ambient_light::AmbientLight;
+use crate::aabb::Aabb;
 use crate::ray::{Color, Ray};
 use crate::transform::Transform;
 use nalgebra::{Point3, UnitQuaternion, Vector2, Vector3};
@@ -27,6 +28,8 @@ pub struct Scene {
     pub wobble: Wobble,
     /// Axis-arrow frame that tracks the rim's floor-contact (pivot) point each frame.
     pub pivot_marker: usize,
+    /// Whether the pivot axis frame is rendered.
+    pub axes_visible: bool,
 }
 
 /// An object standing on the floor that rocks from side to side, tipping onto the edge of
@@ -46,6 +49,38 @@ pub struct Wobble {
 
 /// Radius of a spray can's body in its local space (see `spray_can`).
 const SPRAY_CAN_RADIUS: f64 = 0.4;
+
+/// A group of axis arrows whose visibility can be toggled at runtime.
+/// Wraps a `Composite` and short-circuits both intersection methods when hidden.
+struct AxesFrame {
+    inner: Composite,
+    visible: bool,
+}
+
+impl AxesFrame {
+    fn new(transform: Transform) -> Self {
+        Self { inner: Composite::new(transform), visible: true }
+    }
+    fn with_shape(mut self, shape: impl Intersect + 'static) -> Self {
+        self.inner.add_shape(shape);
+        self
+    }
+}
+
+impl Intersect for AxesFrame {
+    fn test_intersection(&self, ray: &Ray) -> Option<IntersectionResult<'_>> {
+        if self.visible { self.inner.test_intersection(ray) } else { None }
+    }
+    fn hit_distance(&self, ray: &Ray, max_dist: f64) -> Option<f64> {
+        if self.visible { self.inner.hit_distance(ray, max_dist) } else { None }
+    }
+    fn bounds(&self) -> Aabb                          { self.inner.bounds() }
+    fn transform(&self) -> &Transform                 { self.inner.transform() }
+    fn transform_mut(&mut self) -> &mut Transform     { self.inner.transform_mut() }
+    fn refresh_bounds(&mut self)                      { self.inner.refresh_bounds(); }
+    fn children_mut(&mut self) -> Option<&mut ObjectList> { self.inner.children_mut() }
+    fn set_visible(&mut self, v: bool)                { self.visible = v; }
+}
 
 impl Scene {
 
@@ -158,7 +193,7 @@ impl Scene {
             let z_t = Transform::new(Vector3::zeros(), Vector3::repeat(1.0));
             let pivot_pos = Vector3::new(can_position.x, can_position.y, can_position.z + 0.03);
             objects.push(Box::new(
-                Composite::new(Transform::new(pivot_pos, Vector3::repeat(0.5)))
+                AxesFrame::new(Transform::new(pivot_pos, Vector3::repeat(0.5)))
                     .with_shape(arrow(x_t, Color::new(1.0, 0.1, 0.1)))
                     .with_shape(arrow(y_t, Color::new(0.1, 0.9, 0.1)))
                     .with_shape(arrow(z_t, Color::new(0.1, 0.4, 1.0))),
@@ -176,6 +211,7 @@ impl Scene {
             y_size: 720,
             wobble,
             pivot_marker,
+            axes_visible: true,
         }
     }
 
@@ -196,13 +232,12 @@ impl Scene {
         transform.set_rotation(rotation);
         transform.set_translation(position);
 
-        // Move the pivot axis frame to the rim contact point and match the can's rotation.
-        // The Y arrow stays horizontal (Y-axis rotation doesn't move Y), while X and Z tilt
-        // with the can — showing exactly what the rotation is doing.
+        // Move the pivot axis frame and apply current visibility.
         {
-            let pm = self.objects.get_mut(self.pivot_marker)
-                .expect("pivot marker index")
-                .transform_mut();
+            let pm_obj = self.objects.get_mut(self.pivot_marker)
+                .expect("pivot marker index");
+            pm_obj.set_visible(self.axes_visible);
+            let pm = pm_obj.transform_mut();
             pm.set_rotation(rotation);
             pm.set_translation(Vector3::new(pivot.x, pivot.y, w.rest_position.z + 0.03));
         }

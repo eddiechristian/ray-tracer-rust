@@ -109,6 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Buttons — add more here as needed.
     let mut orbit_btn = ui::Button::new("ORBIT: ON", 10, 10, 110, 26);
+    let mut axes_btn  = ui::Button::new("AXES: ON",  130, 10, 100, 26);
 
     // Render continuously instead of only when an event arrives, so FPS is meaningful.
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -141,6 +142,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if orbit_btn.contains(cx, cy) {
                     orbit_enabled = !orbit_enabled;
                 }
+                if axes_btn.contains(cx, cy) {
+                    scene.axes_visible = !scene.axes_visible;
+                }
                 // Add more button hit-tests here.
             }
             Event::AboutToWait => {
@@ -166,6 +170,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 orbit_btn.label = if orbit_enabled { "ORBIT: ON".into() } else { "ORBIT: OFF".into() };
                 orbit_btn.active = orbit_enabled;
                 orbit_btn.draw(frame, WIDTH, HEIGHT);
+                axes_btn.label = if scene.axes_visible { "AXES: ON".into() } else { "AXES: OFF".into() };
+                axes_btn.active = scene.axes_visible;
+                axes_btn.draw(frame, WIDTH, HEIGHT);
                 // Add more btn.draw() calls here.
 
                 // 3. Render the frame to the window
