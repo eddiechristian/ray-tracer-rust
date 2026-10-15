@@ -74,7 +74,7 @@ impl Intersect for AxesFrame {
     fn hit_distance(&self, ray: &Ray, max_dist: f64) -> Option<f64> {
         if self.visible { self.inner.hit_distance(ray, max_dist) } else { None }
     }
-    fn bounds(&self) -> Aabb                          { self.inner.bounds() }
+    fn bounds(&self) -> Aabb { if self.visible { self.inner.bounds() } else { Aabb::empty() } }
     fn transform(&self) -> &Transform                 { self.inner.transform() }
     fn transform_mut(&mut self) -> &mut Transform     { self.inner.transform_mut() }
     fn refresh_bounds(&mut self)                      { self.inner.refresh_bounds(); }
