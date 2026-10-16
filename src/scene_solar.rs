@@ -152,6 +152,31 @@ impl Orbit {
     }
 }
 
+/// Calendar date at `time` screen-seconds after J2000 (1 Jan 2000, 12:00),
+/// e.g. "14 Mar 2000". One orbit of Earth is 365.256 solar days.
+pub fn date_label(time: f64) -> String {
+    const MONTHS: [&str; 12] =
+        ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let days_since_2000 = (0.5 + time / EARTH_YEAR * 365.256).floor() as i64;
+    let (year, month, day) = civil_from_days(days_since_2000 + 10_957); // 1970-01-01 → 2000-01-01
+    format!("{day:2} {} {year}", MONTHS[month as usize - 1])
+}
+
+/// (year, month 1–12, day 1–31) of the day `days` after 1970-01-01, in the Gregorian calendar.
+/// Howard Hinnant's `civil_from_days` algorithm.
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);                                   // day of era
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // year of era
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);                 // day of year, from 1 Mar
+    let mp = (5 * doy + 2) / 153;                                      // month, from March = 0
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
 /// Axial tilt that leans the north pole (+z) toward +y by `tilt`.
 fn axial_tilt(tilt: f64) -> UnitQuaternion<f64> {
     UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -tilt)
@@ -369,6 +394,20 @@ mod tests {
             .map(|i| o.position(i as f64 * o.period / 1000.0).norm())
             .fold(f64::INFINITY, f64::min);
         assert!(closest > EARTH_R + MOON_R, "Moon at {closest} touches Earth");
+    }
+
+    #[test]
+    fn date_label_counts_days_months_and_years() {
+        let day = EARTH_YEAR / 365.256;
+        assert_eq!(date_label(0.0), " 1 Jan 2000");
+        assert_eq!(date_label(0.49 * day), " 1 Jan 2000"); // just before midnight
+        assert_eq!(date_label(0.51 * day), " 2 Jan 2000");
+        assert_eq!(date_label(30.0 * day), "31 Jan 2000");
+        assert_eq!(date_label(31.0 * day), " 1 Feb 2000");
+        assert_eq!(date_label(59.0 * day), "29 Feb 2000"); // 2000 is a leap year
+        assert_eq!(date_label(60.0 * day), " 1 Mar 2000");
+        assert_eq!(date_label(366.0 * day), " 1 Jan 2001");
+        assert_eq!(date_label(366.0 * day + 365.0 * day), " 1 Jan 2002"); // 2001 isn't
     }
 
     #[test]

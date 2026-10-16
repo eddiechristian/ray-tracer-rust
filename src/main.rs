@@ -244,6 +244,7 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         solar.animate(5.0); // 5 s into the 1800 s Earth year
         let mut buffer = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
         solar.render(&mut buffer);
+        ui::draw_label(&mut buffer, WIDTH, HEIGHT, &scene_solar::date_label(5.0), 130, 10);
         let img = image::RgbaImage::from_raw(WIDTH, HEIGHT, buffer).expect("buffer size");
         img.save("frame_solar.png").expect("save");
         println!("Saved frame_solar.png");
@@ -307,6 +308,7 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 orbit_btn.label  = if orbit_enabled { "ORBIT: ON".into() } else { "ORBIT: OFF".into() };
                 orbit_btn.active = orbit_enabled;
                 orbit_btn.draw(frame, WIDTH, HEIGHT);
+                ui::draw_label(frame, WIDTH, HEIGHT, &scene_solar::date_label(time), 130, 10);
 
                 if let Err(err) = pixels.render() {
                     println!("Render error: {err}");

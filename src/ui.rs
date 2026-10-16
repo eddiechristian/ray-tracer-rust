@@ -135,3 +135,28 @@ impl Button {
             .unwrap();
     }
 }
+
+// ---------------------------------------------------------------------------
+// Label
+// ---------------------------------------------------------------------------
+
+/// Draws `text` in white on a dark box whose top-left corner is `(x, y)`.
+pub fn draw_label(frame: &mut [u8], screen_w: u32, screen_h: u32, text: &str, x: i32, y: i32) {
+    let mut display = PixelBuffer::new(frame, screen_w, screen_h);
+    let size = Size::new(text.len() as u32 * 8 + 16, 26); // FONT_8X13 is 8 px per character
+    Rectangle::new(Point::new(x, y), size)
+        .into_styled(
+            PrimitiveStyleBuilder::new()
+                .fill_color(Rgb888::new(40, 40, 40))
+                .stroke_color(Rgb888::WHITE)
+                .stroke_width(1)
+                .build(),
+        )
+        .draw(&mut display)
+        .unwrap();
+    let char_style = MonoTextStyle::new(&FONT_8X13, Rgb888::WHITE);
+    let text_style = TextStyleBuilder::new().baseline(Baseline::Middle).build();
+    Text::with_text_style(text, Point::new(x + 8, y + size.height as i32 / 2), char_style, text_style)
+        .draw(&mut display)
+        .unwrap();
+}
