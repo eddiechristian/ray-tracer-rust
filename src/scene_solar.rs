@@ -67,11 +67,16 @@ pub fn shuttle_camera() -> ChaseCamera {
     ChaseCamera::from_offset(Vector3::new(-0.25, -0.8, 0.45), 0.32)
 }
 
-/// The window's camera rig: starts exactly at `SYSTEM_VIEW`, and can be swung around and
-/// zoomed from a close-up of the shuttle out to well beyond Mars's orbit.
+/// Zoom range (camera distance from the point it circles) around the system: close enough
+/// to skim a planet's surface when zooming toward the mouse, out to well beyond Mars's orbit.
+pub const SYSTEM_ZOOM: (f64, f64) = (0.05, 20.0);
+/// Zoom range around the shuttle: no closer than just outside its wingtips.
+pub const SHUTTLE_ZOOM: (f64, f64) = (0.35, 20.0);
+
+/// The window's camera rig: starts exactly at `SYSTEM_VIEW`.
 pub fn system_camera() -> ChaseCamera {
     ChaseCamera::from_offset(SYSTEM_VIEW.start - SYSTEM_VIEW.center, SYSTEM_VIEW.horiz_size)
-        .with_distance_limits(0.35, 20.0)
+        .with_distance_limits(SYSTEM_ZOOM.0, SYSTEM_ZOOM.1)
 }
 
 impl CameraView {
@@ -91,6 +96,8 @@ impl CameraView {
 // Orbits and spins are computed in fixed (star) axes, so these are sidereal periods.
 
 pub const EARTH_YEAR: f64 = 1800.0;            // 30 minutes per Earth year
+/// Days (mean solar days) in one `EARTH_YEAR`: the sidereal year.
+pub const DAYS_PER_YEAR: f64 = 365.256;
 const EARTH_DAY:  f64 = EARTH_YEAR / 366.256;  // 23.93 h sidereal day
 const MARS_DAY:   f64 = EARTH_DAY * 1.02749;   // 24.62 h sidereal day
 
@@ -157,8 +164,9 @@ const MARS_ORBIT: Orbit = Orbit {
 /// The Moon around Earth. Its distance isn't to scale (real: 60 Earth radii), but the
 /// shape of its orbit is: tilted 5.14° (so eclipses are rare), with the plane regressing
 /// every 18.6 years and the perigee advancing every 8.85 years.
-/// The Moon's sidereal period (27.32 days).
-pub const MOON_PERIOD: f64 = EARTH_YEAR / 13.369;
+/// The Moon's sidereal period, 27.321661 days. (Rounding this to 13.369 orbits per year
+/// made the Moon's phase drift by about 3° (6 hours) by 2025.)
+pub const MOON_PERIOD: f64 = EARTH_YEAR * 27.321661 / DAYS_PER_YEAR;
 
 const MOON_ORBIT: Orbit = Orbit {
     semi_major: 0.4, // must stay above EARTH_R + MOON_R at perigee
@@ -219,7 +227,7 @@ pub fn shuttle_orientation() -> UnitQuaternion<f64> {
 pub fn date_label(time: f64) -> String {
     const MONTHS: [&str; 12] =
         ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    let days_since_2000 = (0.5 + time / EARTH_YEAR * 365.256).floor() as i64;
+    let days_since_2000 = (0.5 + time / EARTH_YEAR * DAYS_PER_YEAR).floor() as i64;
     let (year, month, day) = civil_from_days(days_since_2000 + 10_957); // 1970-01-01 → 2000-01-01
     format!("{day:2} {} {year}", MONTHS[month as usize - 1])
 }
@@ -397,6 +405,18 @@ impl SolarScene {
         }
     }
 
+    /// The nearest surface point (planet, Moon, Sun or shuttle) seen at screen position
+    /// (`norm_x`, `norm_y`), each in [-1, 1] with y up, or `None` for empty space.
+    pub fn pick(&self, norm_x: f64, norm_y: f64) -> Option<Vector3<f64>> {
+        let ray = self.camera.generate_ray(norm_x, norm_y);
+        let dist = |p: &Vector3<f64>| (p - ray.point1).norm();
+        [self.objects.closest_hit(&ray), self.sun.closest_hit(&ray)]
+            .into_iter()
+            .flatten()
+            .map(|hit| hit.intersection)
+            .min_by(|a, b| dist(a).total_cmp(&dist(b)))
+    }
+
     pub fn render(&self, buffer: &mut [u8]) {
         let x_fact = 2.0 / self.x_size as f64;
         let y_fact = 2.0 / self.y_size as f64;
@@ -430,6 +450,49 @@ impl SceneContext for SolarScene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Screen time at `hour` (UTC) on a calendar date: the inverse of `date_label`.
+    fn time_at(year: i64, month: i64, day: i64, hour: f64) -> f64 {
+        // Howard Hinnant's `days_from_civil`, counted from 2000-01-01.
+        let (y, m) = if month <= 2 { (year - 1, month + 9) } else { (year, month - 3) };
+        let era = y.div_euclid(400);
+        let yoe = y - era * 400;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + (153 * m + 2) / 5 + day - 1;
+        let days = (era * 146_097 + doe - 719_468 - 10_957) as f64 + (hour - 12.0) / 24.0;
+        days / DAYS_PER_YEAR * EARTH_YEAR
+    }
+
+    #[test]
+    fn time_at_matches_date_label() {
+        assert_eq!(date_label(time_at(2024, 4, 8, 13.0)), " 8 Apr 2024");
+        assert_eq!(date_label(time_at(2000, 1, 1, 12.0)), " 1 Jan 2000");
+    }
+
+    /// Real eclipses: the Moon must be lined up with the Sun (new) or opposite it (full) at
+    /// the real time, and close to the ecliptic. Checks the Moon's period and starting
+    /// position over 25 years.
+    #[test]
+    fn moon_is_in_place_for_real_eclipses() {
+        let lon = |v: Vector3<f64>| v.y.atan2(v.x);
+        for (year, month, day, hour, full) in [
+            (2000, 1, 21, 4.67, true),    // total lunar eclipse
+            (2001, 6, 21, 12.07, false),  // total solar eclipse
+            (2017, 8, 21, 18.43, false),  // total solar eclipse (USA)
+            (2024, 4, 8, 18.35, false),   // total solar eclipse (North America)
+            (2025, 3, 14, 6.97, true),    // total lunar eclipse
+        ] {
+            let time = time_at(year, month, day, hour);
+            let sun = -EARTH_ORBIT.position(time); // seen from Earth
+            let moon = MOON_ORBIT.position(time);
+            let target = if full { 180.0 } else { 0.0 };
+            let elongation = ((lon(moon) - lon(sun)) / DEG).rem_euclid(360.0);
+            let error = (elongation - target + 540.0).rem_euclid(360.0) - 180.0;
+            let latitude = (moon.z / moon.norm()).asin() / DEG;
+            println!("{year}-{month:02}-{day:02}: phase off by {error:+.2}°, latitude {latitude:+.2}°");
+            assert!(error.abs() < 2.0, "{year}-{month}-{day}: phase off by {error:.2}°");
+            assert!(latitude.abs() < 1.5, "{year}-{month}-{day}: {latitude:.2}° off the ecliptic");
+        }
+    }
 
     /// Time (screen seconds) when `orbit` is at perihelion, for a fixed-apsis orbit.
     fn perihelion_time(orbit: &Orbit) -> f64 {
@@ -467,7 +530,7 @@ mod tests {
 
     #[test]
     fn date_label_counts_days_months_and_years() {
-        let day = EARTH_YEAR / 365.256;
+        let day = EARTH_YEAR / DAYS_PER_YEAR;
         assert_eq!(date_label(0.0), " 1 Jan 2000");
         assert_eq!(date_label(0.49 * day), " 1 Jan 2000"); // just before midnight
         assert_eq!(date_label(0.51 * day), " 2 Jan 2000");

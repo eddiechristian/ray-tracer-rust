@@ -17,7 +17,7 @@ use winit::{
     window::WindowBuilder,
 };
 
-use crate::{chase_camera, controls, scene, scene_solar, ship, ui, HEIGHT, WIDTH};
+use crate::{camera, chase_camera, controls, scene, scene_solar, ship, ui, HEIGHT, WIDTH};
 
 // The camera circles its centre once every ORBIT_PERIOD_SECS while ORBIT is on.
 const ORBIT_PERIOD_SECS: f64 = 30.0;
@@ -92,7 +92,7 @@ impl ShapesMode {
 // ---------------------------------------------------------------------------
 
 const SOLAR_HELP: &str = "W/S A/D Q/E steer  Shift/Ctrl thrust/brake  R reset  |  \
-                          right-drag/arrows orbit  wheel/PgUp/PgDn zoom  C free/chase  -/= time  Tab scene";
+                          right-drag/arrows orbit  wheel/PgUp/PgDn zoom  H home  C free/chase  -/= time  Tab scene";
 
 /// Time-speed presets for the solar clock (planets, Moon, date), as multiples of normal
 /// (`EARTH_YEAR` per year). The DOWN/UP buttons and the -/= keys step through them.
@@ -119,7 +119,7 @@ fn speed_table() -> Vec<String> {
         let s = f64::from(speed);
         rows.push(row([
             &format!("{speed}x"),
-            &format_secs(year / 365.256 / s),
+            &format_secs(year / scene_solar::DAYS_PER_YEAR / s),
             &format_secs(year / 12.0 / s),
             &format_secs(year / s),
             &format_secs(scene_solar::MOON_PERIOD / s),
@@ -136,6 +136,9 @@ struct SolarMode {
     /// C toggles free / chase (chase implies the ship).
     rig: chase_camera::ChaseCamera,
     shuttle_view: bool,
+    /// The point the rig circles in the system view. Starts at `SYSTEM_VIEW.center`; zooming
+    /// with the wheel pulls it toward the point under the mouse. H puts it back.
+    pivot: Vector3<f64>,
     controls: controls::Controls,
     dragging: bool, // right mouse button held: orbit the camera
     view_btn: ui::Button,
@@ -156,6 +159,7 @@ impl SolarMode {
             ship: ship::Ship::new(scene_solar::SHUTTLE_POS, scene_solar::shuttle_orientation()),
             rig: scene_solar::system_camera(),
             shuttle_view: false,
+            pivot: scene_solar::SYSTEM_VIEW.center,
             controls: controls::Controls::default(),
             dragging: false,
             view_btn: ui::Button::new("", 270, 10, 130, 26),
@@ -174,12 +178,19 @@ impl SolarMode {
             if self.shuttle_view {
                 self.rig.set_mode(chase_camera::Mode::Free, &self.ship.orientation);
             }
-            self.shuttle_view = !self.shuttle_view;
+            self.set_shuttle_view(!self.shuttle_view);
         } else if self.slower_btn.contains(cx, cy) {
             self.slower();
         } else if self.faster_btn.contains(cx, cy) {
             self.faster();
         }
+    }
+
+    /// Switches what the rig circles, with that view's zoom range.
+    fn set_shuttle_view(&mut self, on: bool) {
+        self.shuttle_view = on;
+        let (min, max) = if on { scene_solar::SHUTTLE_ZOOM } else { scene_solar::SYSTEM_ZOOM };
+        self.rig.set_distance_limits(min, max);
     }
 
     fn slower(&mut self) {
@@ -206,12 +217,18 @@ impl SolarMode {
                 if self.shuttle_view {
                     self.rig.toggle_mode(&self.ship.orientation);
                 } else {
-                    self.shuttle_view = true;
+                    self.set_shuttle_view(true);
                     self.rig.set_mode(chase_camera::Mode::Chase, &self.ship.orientation);
                 }
             }
             KeyCode::Minus => self.slower(),
             KeyCode::Equal => self.faster(),
+            // Home: the system view as it started.
+            KeyCode::KeyH => {
+                self.rig = scene_solar::system_camera();
+                self.pivot = scene_solar::SYSTEM_VIEW.center;
+                self.shuttle_view = false;
+            }
             KeyCode::KeyR => {
                 self.ship = ship::Ship::new(scene_solar::SHUTTLE_POS, scene_solar::shuttle_orientation());
             }
@@ -237,8 +254,39 @@ impl SolarMode {
         }
     }
 
-    fn wheel(&mut self, notches: f64) {
+    /// Zooms by `notches` of the wheel. In the system view it zooms toward `cursor` (screen
+    /// position, each coordinate in [-1, 1] with y up): the point under the mouse stays put
+    /// while everything around it grows. Around the ship it zooms toward the ship.
+    fn wheel(&mut self, notches: f64, cursor: Option<(f64, f64)>) {
+        let before = self.rig.distance;
         self.rig.zoom(controls::WHEEL_ZOOM.powf(notches));
+        let factor = before / self.rig.distance; // after the zoom limits
+        let (Some((x, y)), false) = (cursor, self.shuttle_view) else { return };
+        if factor == 1.0 {
+            return;
+        }
+        // The point under the mouse: the surface there, or in empty space the point at the
+        // pivot's depth. Shrinking the pivot and camera toward it by `factor` keeps it at the
+        // same place on screen, since the view direction doesn't change.
+        let camera = &self.solar.camera;
+        let target = self.solar.pick(x, y).unwrap_or_else(|| {
+            let dir = camera.generate_ray(x, y).lab.normalize();
+            let forward = (self.pivot - camera.position()).normalize();
+            camera.position() + dir * ((self.pivot - camera.position()).norm() / dir.dot(&forward))
+        });
+        self.pivot = target + (self.pivot - target) / factor;
+        // Several wheel events can arrive in one frame: keep the camera current for the next.
+        self.solar.camera = self.camera();
+    }
+
+    /// The camera for the current view.
+    fn camera(&self) -> camera::Camera {
+        if self.shuttle_view {
+            self.rig.camera(self.ship.position, &self.ship.orientation)
+        } else {
+            // Free mode around a fixed point: the ship's orientation doesn't matter.
+            self.rig.camera(self.pivot, &UnitQuaternion::identity())
+        }
     }
 
     fn update(&mut self, dt: f64, orbit: bool) {
@@ -251,12 +299,7 @@ impl SolarMode {
         }
         self.solar.animate(self.sim_time);
         self.solar.set_shuttle_pose(self.ship.position, self.ship.orientation);
-        self.solar.camera = if self.shuttle_view {
-            self.rig.camera(self.ship.position, &self.ship.orientation)
-        } else {
-            // Free mode around a fixed point: the ship's orientation doesn't matter.
-            self.rig.camera(scene_solar::SYSTEM_VIEW.center, &UnitQuaternion::identity())
-        };
+        self.solar.camera = self.camera();
     }
 
     fn render(&self, frame: &mut [u8]) {
@@ -395,7 +438,14 @@ pub fn run(start_solar: bool) -> Result<(), Box<dyn std::error::Error>> {
                     MouseScrollDelta::PixelDelta(p) => p.y / 40.0,
                 };
                 if show_solar {
-                    solar.wheel(notches);
+                    // Mouse position in [-1, 1] screen coordinates (y up), as the renderer uses.
+                    let cursor = pixels
+                        .window_pos_to_pixel((cursor_pos.0 as f32, cursor_pos.1 as f32))
+                        .ok()
+                        .map(|(px, py)| {
+                            (px as f64 * 2.0 / WIDTH as f64 - 1.0, 1.0 - py as f64 * 2.0 / HEIGHT as f64)
+                        });
+                    solar.wheel(notches, cursor);
                 }
             }
             WindowEvent::MouseInput { state, button: MouseButton::Right, .. } => {
@@ -420,4 +470,28 @@ pub fn run(start_solar: bool) -> Result<(), Box<dyn std::error::Error>> {
         }
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wheel_zooms_toward_the_point_under_the_mouse() {
+        let mut mode = SolarMode::new();
+        mode.update(0.0, false);
+        // Off-centre cursor positions that land on something: Earth, the Sun, ...
+        let hits: Vec<_> = (-8..=8)
+            .flat_map(|i| (-4..=4).map(move |j| (i as f64 / 10.0, j as f64 / 5.0)))
+            .filter_map(|c| mode.solar.pick(c.0, c.1).map(|p| (c, p)))
+            .filter(|&((x, y), _)| x.abs() + y.abs() > 0.2)
+            .collect();
+        assert!(!hits.is_empty(), "nothing to zoom toward");
+        let ((x, y), before) = hits[0];
+        let distance = mode.rig.distance;
+        mode.wheel(3.0, Some((x, y)));
+        assert!(mode.rig.distance < distance, "zoomed in");
+        let after = mode.solar.pick(x, y).expect("still under the mouse");
+        assert!((after - before).norm() < 1e-6, "{before:?} moved to {after:?}");
+    }
 }

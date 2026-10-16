@@ -94,10 +94,15 @@ impl ChaseCamera {
 
     /// Zoom range, for targets bigger or smaller than the shuttle.
     pub fn with_distance_limits(mut self, min: f64, max: f64) -> Self {
+        self.set_distance_limits(min, max);
+        self
+    }
+
+    /// Changes the zoom range, moving the camera in or out if it's now outside it.
+    pub fn set_distance_limits(&mut self, min: f64, max: f64) {
         self.min_distance = min;
         self.max_distance = max;
         self.distance = self.distance.clamp(min, max);
-        self
     }
 
     /// Steers the rig at stick-like rates for `dt` seconds.
