@@ -17,7 +17,8 @@ A Rust port of the QuantitativeBytes "qbRayTrace" C++/SDL2 YouTube series, done 
 
 ```bash
 cargo build                               # dev profile is optimized (opt-level 2); unoptimized is ~45x slower
-cargo run --release                       # open the 1280x720 window and render
+cargo run --release                       # open the 1280x720 window (SCENE button / Tab switches shapes ↔ solar)
+cargo run --release -- --solar            # same window, starting on the solar system
 cargo run --release -- --bench [frames]   # time N off-screen renders (default 10), no window
 cargo run --release -- --solar --bench [frames]  # same for the solar-system scene
 cargo run --release -- --solar --bench-shuttle [frames]  # ...from the shuttle close-up (ray-marching cost)
@@ -33,17 +34,28 @@ Running the binary needs a display: `winit` opens a window and `pixels` (wgpu) n
 
 ## Architecture
 
-- `main.rs`: sets up the `winit` 0.29 event loop and the `pixels` framebuffer. On every `Event::AboutToWait` it moves the camera along an orbit around its look-at point (`orbit_position`; the angle comes from elapsed time, one revolution per `ORBIT_PERIOD_SECS`), calls `scene.animate(time)` to move animated objects, then calls `scene.render(frame)`, which re-traces the whole image each iteration. This is intended: the camera and objects will move, so there is no caching. `winit` is pinned to 0.29 with the `rwh_05` feature so it works with `pixels` 0.13. Don't bump either crate on its own. `--solar` runs `run_solar` instead: the same loop for the solar-system scene, plus the `--save` / `--bench` / `--closeup` variants. The player flies the shuttle there (see `ship.rs` / `chase_camera.rs` / `controls.rs`).
-  - **One camera rig:** a single `ChaseCamera` (`system_camera()`: it starts at `SYSTEM_VIEW` and zooms from 0.35 to 20 units).
-  - **VIEW button:** switches what the rig circles: `SYSTEM_VIEW.center` or the ship (`shuttle_view`). The rig keeps its zoom and angles, so switching just re-centres. The window starts on the system.
-  - **C** toggles free/chase without moving the camera (`ChaseCamera::set_mode` re-expresses the angles in the new frame). In system view it also switches to the ship, since chase follows the ship's heading. VIEW back to system returns to free.
-  - **Camera controls** (drag, arrows, wheel, PgUp/PgDn) steer the rig.
-  - **ORBIT button:** swings the rig automatically, adding to manual control.
-  - **Testing the window:** X11 key events sent with `XSendEvent` reach winit when its window has focus, but mouse input goes through XInput2, so synthetic mouse events don't.
-  - **Each frame:** `ship.update(controls.ship_input())` and `rig.update(controls.camera_input())`, then `solar.animate(time)`, then `solar.set_shuttle_pose`.
-  - **`dt` is capped at 0.1 s,** so a stall doesn't fling the ship.
-  - **Window focus:** losing it releases all held keys.
-  - **Help:** a line of key help is drawn along the bottom. `run_benchmark` takes a render closure, so both scenes share it.
+- `main.rs`: command-line handling.
+  - **The window:** with no flags, or with just `--solar`, it calls `app::run` (`--solar` starts on the solar system).
+  - **Off-screen options:** `--save`, `--bench`, `--diagnose`, and `--solar --save/--bench/--bench-shuttle/--closeup` render without a window. `run_benchmark` takes a render closure, so both scenes share it.
+  - **Window size:** defines `WIDTH` / `HEIGHT`.
+- `app.rs`: the interactive window. It sets up the `winit` 0.29 event loop and the `pixels` framebuffer, and shows one of two scenes, switched with the **SCENE** button or **Tab**.
+  - **Shared:** the ORBIT button, the SCENE button and the FPS counter in the title.
+  - **Per scene:** each scene's state and controls live in `ShapesMode` / `SolarMode`, with the same small set of methods (`click`, `update`, `render`, `draw_ui`, `title`; the solar mode adds keys and mouse).
+  - **Both scenes are built at start-up.** Only the one on screen is updated and rendered; the other keeps its state. Switching releases held keys.
+  - **Each frame (`Event::AboutToWait`):** update the active scene from elapsed time, then `render(frame)`, which re-traces the whole image. This is intended: the camera and objects move, so there is no caching.
+  - **`dt` is capped at `MAX_DT` (0.1 s),** so a stall doesn't make things jump.
+  - **`winit` is pinned to 0.29** with the `rwh_05` feature so it works with `pixels` 0.13. Don't bump either crate on its own.
+  - **Shapes scene:** the camera circles its look-at point (`orbit_position`, one revolution per `ORBIT_PERIOD_SECS`) while ORBIT is on, and `scene.animate(time)` moves animated objects. There's an AXES button.
+  - **Solar scene:** the player flies the shuttle (see `ship.rs` / `chase_camera.rs` / `controls.rs`).
+    - **One camera rig:** a single `ChaseCamera` (`system_camera()`: it starts at `SYSTEM_VIEW` and zooms from 0.35 to 20 units).
+    - **VIEW button:** switches what the rig circles: `SYSTEM_VIEW.center` or the ship (`shuttle_view`). The rig keeps its zoom and angles, so switching just re-centres. It starts on the system.
+    - **C** toggles free/chase without moving the camera (`ChaseCamera::set_mode` re-expresses the angles in the new frame). In system view it also switches to the ship, since chase follows the ship's heading. VIEW back to system returns to free.
+    - **Camera controls** (drag, arrows, wheel, PgUp/PgDn) steer the rig.
+    - **ORBIT button:** swings the rig automatically, adding to manual control.
+    - **Each frame:** `ship.update(controls.ship_input())` and `rig.update(controls.camera_input())`, then `solar.animate(time)`, then `solar.set_shuttle_pose`.
+    - **Window focus:** losing it releases all held keys.
+    - **Help:** a line of key help is drawn along the bottom.
+  - **Testing the window:** X11 key events sent with `XSendEvent` reach winit when its window has focus, but mouse input goes through XInput2, so synthetic mouse events don't (hence Tab for SCENE).
 - `ui.rs`: overlays drawn into the framebuffer after rendering, using `embedded-graphics` (`FONT_8X13`): the ORBIT toggle `Button`, and `draw_label` (the solar scene's date).
 - `scene_solar.rs`: `SolarScene`, the solar-system scene (plans: `plan_image_textures_solar_system.md`, `plan_ray_marching_shuttle.md`).
   - **Contents:** the Sun, Earth, Moon and Mars as textured spheres from `textures/`, plus the shuttle. A `PointLight` sits at the Sun's centre.
@@ -104,4 +116,4 @@ Running the binary needs a display: `winit` opens a window and `pixels` (wgpu) n
 - `ray.rs`: `Ray { point1, point2, lab }`, where `lab = point2 - point1`, following the C++ naming. It also defines `Color { r, g, b }`, with `+`, `* f64` and component-wise `* Color`.
 - Math is `nalgebra::Vector3<f64>` / `Point3<f64>` directly, with no wrapper type. `nalgebra` replaces the C++ `qbLinAlg` library. `.normalize()` on a zero vector returns NaN.
 
-Window size (1280x720) is hard-coded separately in `main.rs`, in `Scene::new`, in `SolarScene::new`, and in the camera's `DEFAULT_ASPECT_RATIO`. Keep all four in sync if you change it.
+Window size (1280x720) is hard-coded separately in `main.rs` (`WIDTH`/`HEIGHT`), in `Scene::new`, in `SolarScene::new`, and in the camera's `DEFAULT_ASPECT_RATIO`. Keep all four in sync if you change it.
