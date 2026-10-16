@@ -160,3 +160,41 @@ pub fn draw_label(frame: &mut [u8], screen_w: u32, screen_h: u32, text: &str, x:
         .draw(&mut display)
         .unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// Table
+// ---------------------------------------------------------------------------
+
+/// Draws `rows` of text in a dark box whose top-right corner is `(right, y)`, with row
+/// `highlight` on a green background. Use monospace-aligned rows (FONT_8X13 is fixed width).
+pub fn draw_table(frame: &mut [u8], screen_w: u32, screen_h: u32, rows: &[String], highlight: usize, right: i32, y: i32) {
+    const ROW_H: i32 = 16;
+    let mut display = PixelBuffer::new(frame, screen_w, screen_h);
+    let chars = rows.iter().map(|r| r.len()).max().unwrap_or(0) as u32;
+    let size = Size::new(chars * 8 + 16, rows.len() as u32 * ROW_H as u32 + 8);
+    let x = right - size.width as i32;
+    Rectangle::new(Point::new(x, y), size)
+        .into_styled(
+            PrimitiveStyleBuilder::new()
+                .fill_color(Rgb888::new(40, 40, 40))
+                .stroke_color(Rgb888::WHITE)
+                .stroke_width(1)
+                .build(),
+        )
+        .draw(&mut display)
+        .unwrap();
+    let char_style = MonoTextStyle::new(&FONT_8X13, Rgb888::WHITE);
+    let text_style = TextStyleBuilder::new().baseline(Baseline::Middle).build();
+    for (i, row) in rows.iter().enumerate() {
+        let row_y = y + 4 + i as i32 * ROW_H;
+        if i == highlight {
+            Rectangle::new(Point::new(x + 2, row_y), Size::new(size.width - 4, ROW_H as u32))
+                .into_styled(PrimitiveStyleBuilder::new().fill_color(Rgb888::new(30, 160, 30)).build())
+                .draw(&mut display)
+                .unwrap();
+        }
+        Text::with_text_style(row, Point::new(x + 8, row_y + ROW_H / 2), char_style, text_style)
+            .draw(&mut display)
+            .unwrap();
+    }
+}

@@ -90,7 +90,7 @@ impl CameraView {
 // (The camera's own orbit is separate: ORBIT_PERIOD_SECS in main.rs.)
 // Orbits and spins are computed in fixed (star) axes, so these are sidereal periods.
 
-const EARTH_YEAR: f64 = 1800.0;                // 30 minutes per Earth year
+pub const EARTH_YEAR: f64 = 1800.0;            // 30 minutes per Earth year
 const EARTH_DAY:  f64 = EARTH_YEAR / 366.256;  // 23.93 h sidereal day
 const MARS_DAY:   f64 = EARTH_DAY * 1.02749;   // 24.62 h sidereal day
 
@@ -157,6 +157,9 @@ const MARS_ORBIT: Orbit = Orbit {
 /// The Moon around Earth. Its distance isn't to scale (real: 60 Earth radii), but the
 /// shape of its orbit is: tilted 5.14° (so eclipses are rare), with the plane regressing
 /// every 18.6 years and the perigee advancing every 8.85 years.
+/// The Moon's sidereal period (27.32 days).
+pub const MOON_PERIOD: f64 = EARTH_YEAR / 13.369;
+
 const MOON_ORBIT: Orbit = Orbit {
     semi_major: 0.4, // must stay above EARTH_R + MOON_R at perigee
     eccentricity: 0.0549,
@@ -166,7 +169,7 @@ const MOON_ORBIT: Orbit = Orbit {
     perihelion: 83.35 * DEG,
     perihelion_period: 8.85 * EARTH_YEAR,
     mean_longitude: 218.32 * DEG,
-    period: EARTH_YEAR / 13.369, // 27.32-day sidereal month
+    period: MOON_PERIOD,
 };
 
 impl Orbit {

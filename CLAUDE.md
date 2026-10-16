@@ -52,16 +52,17 @@ Running the binary needs a display: `winit` opens a window and `pixels` (wgpu) n
     - **C** toggles free/chase without moving the camera (`ChaseCamera::set_mode` re-expresses the angles in the new frame). In system view it also switches to the ship, since chase follows the ship's heading. VIEW back to system returns to free.
     - **Camera controls** (drag, arrows, wheel, PgUp/PgDn) steer the rig.
     - **ORBIT button:** swings the rig automatically, adding to manual control.
-    - **Each frame:** `ship.update(controls.ship_input())` and `rig.update(controls.camera_input())`, then `solar.animate(time)`, then `solar.set_shuttle_pose`.
+    - **DOWN / UP buttons (either side of the TIME label) / -/= keys:** set the solar clock's speed (`TIME_SPEEDS`: 1x, 10x, 25x, 50x, 100x, 400x; it starts at 1x). A table at the top right (`speed_table`, drawn with `ui::draw_table`) shows how long a day, month, year and Moon orbit take at each speed, with the current one highlighted. The clock is `SolarMode::sim_time`, which advances by `dt` × speed and drives the planets and the date. The ship and camera always run in real time. The clock pauses while the shapes scene is shown.
+    - **Each frame:** `ship.update(controls.ship_input())` and `rig.update(controls.camera_input())`, then `solar.animate(sim_time)`, then `solar.set_shuttle_pose`.
     - **Window focus:** losing it releases all held keys.
     - **Help:** a line of key help is drawn along the bottom.
   - **Testing the window:** X11 key events sent with `XSendEvent` reach winit when its window has focus, but mouse input goes through XInput2, so synthetic mouse events don't (hence Tab for SCENE).
-- `ui.rs`: overlays drawn into the framebuffer after rendering, using `embedded-graphics` (`FONT_8X13`): the ORBIT toggle `Button`, and `draw_label` (the solar scene's date).
+- `ui.rs`: overlays drawn into the framebuffer after rendering, using `embedded-graphics` (`FONT_8X13`): the ORBIT toggle `Button`, `draw_label` (the solar scene's date) and `draw_table` (the time-speed table).
 - `scene_solar.rs`: `SolarScene`, the solar-system scene (plans: `plan_image_textures_solar_system.md`, `plan_ray_marching_shuttle.md`).
   - **Contents:** the Sun, Earth, Moon and Mars as textured spheres from `textures/`, plus the shuttle. A `PointLight` sits at the Sun's centre.
   - **The Sun is kept in its own `sun` list**, not in `objects`. Otherwise every shadow ray would hit it, because the light is inside it. Its material is `with_emissive()`. `trace_inner` takes the nearer of the two lists' hits; `scene_objects()` (used for shadows) returns only `objects`.
   - **Units:** 1 AU = 2 units (`AU`). Planet sizes are inflated about 2600×, but their ratios are real. The Sun (radius 0.5) is shrunk on purpose, and the Moon's distance (0.4) isn't to scale.
-  - **Time:** `time` is screen-seconds since J2000 (1 Jan 2000, 12:00). One Earth year is `EARTH_YEAR` = 1800 s, and all periods are sidereal. The camera's orbit (`ORBIT_PERIOD_SECS` = 30 s in `main.rs`) is separate.
+  - **Time:** `time` is screen-seconds since J2000 (1 Jan 2000, 12:00). One Earth year is `EARTH_YEAR` = 1800 s, and all periods are sidereal. The window's TIME button scales this clock. The camera's orbit (`ORBIT_PERIOD_SECS` = 30 s in `app.rs`) is separate.
   - **Orbits:** `Orbit` holds classical elements at J2000: semi-major axis, eccentricity, inclination, node, perihelion, mean longitude, plus optional node/perihelion drift. `position(time)` solves Kepler's equation. The Moon's node regresses (18.6 y) and its perigee advances (8.85 y).
   - **Spin:** Earth (23.44°) and Mars (25.19°) have axial tilts, with the north pole leaning toward +y. +x is the vernal equinox. The Moon is tidally locked: its texture's longitude 0 faces Earth.
   - **The date:** `date_label(time)` gives the calendar date shown on screen.

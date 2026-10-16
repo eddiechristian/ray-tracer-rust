@@ -92,7 +92,41 @@ impl ShapesMode {
 // ---------------------------------------------------------------------------
 
 const SOLAR_HELP: &str = "W/S A/D Q/E steer  Shift/Ctrl thrust/brake  R reset  |  \
-                          right-drag/arrows orbit  wheel/PgUp/PgDn zoom  C free/chase  Tab scene";
+                          right-drag/arrows orbit  wheel/PgUp/PgDn zoom  C free/chase  -/= time  Tab scene";
+
+/// Time-speed presets for the solar clock (planets, Moon, date), as multiples of normal
+/// (`EARTH_YEAR` per year). The DOWN/UP buttons and the -/= keys step through them.
+const TIME_SPEEDS: [u32; 6] = [1, 10, 25, 50, 100, 400];
+
+/// "0.05 s", "3.7 s", "3.0 min": a screen duration for the speed table.
+fn format_secs(secs: f64) -> String {
+    if secs >= 60.0 {
+        format!("{:.1} min", secs / 60.0)
+    } else if secs >= 1.0 {
+        format!("{secs:.1} s")
+    } else {
+        format!("{secs:.2} s")
+    }
+}
+
+/// The speed table drawn on screen: how long a day, month, year and Moon orbit take at each
+/// preset. Built once, since it depends only on the constants.
+fn speed_table() -> Vec<String> {
+    let year = scene_solar::EARTH_YEAR;
+    let row = |cols: [&str; 5]| format!("{:<6}{:>9}{:>10}{:>10}{:>10}", cols[0], cols[1], cols[2], cols[3], cols[4]);
+    let mut rows = vec![row(["Speed", "Day", "Month", "Year", "Moon"])];
+    for &speed in &TIME_SPEEDS {
+        let s = f64::from(speed);
+        rows.push(row([
+            &format!("{speed}x"),
+            &format_secs(year / 365.256 / s),
+            &format_secs(year / 12.0 / s),
+            &format_secs(year / s),
+            &format_secs(scene_solar::MOON_PERIOD / s),
+        ]));
+    }
+    rows
+}
 
 struct SolarMode {
     solar: scene_solar::SolarScene,
@@ -105,6 +139,14 @@ struct SolarMode {
     controls: controls::Controls,
     dragging: bool, // right mouse button held: orbit the camera
     view_btn: ui::Button,
+    /// The solar clock: screen-seconds since J2000, advanced by `dt` × the time speed. The
+    /// ship and camera always move in real time.
+    sim_time: f64,
+    speed_idx: usize, // into TIME_SPEEDS
+    speed_label: ui::Button, // display only
+    slower_btn: ui::Button,
+    faster_btn: ui::Button,
+    speed_table: Vec<String>,
 }
 
 impl SolarMode {
@@ -117,6 +159,12 @@ impl SolarMode {
             controls: controls::Controls::default(),
             dragging: false,
             view_btn: ui::Button::new("", 270, 10, 130, 26),
+            sim_time: 0.0,
+            speed_idx: 0,
+            slower_btn: ui::Button::new("DOWN", 410, 10, 50, 26),
+            speed_label: ui::Button::new("", 466, 10, 100, 26),
+            faster_btn: ui::Button::new("UP", 572, 10, 40, 26),
+            speed_table: speed_table(),
         }
     }
 
@@ -127,7 +175,23 @@ impl SolarMode {
                 self.rig.set_mode(chase_camera::Mode::Free, &self.ship.orientation);
             }
             self.shuttle_view = !self.shuttle_view;
+        } else if self.slower_btn.contains(cx, cy) {
+            self.slower();
+        } else if self.faster_btn.contains(cx, cy) {
+            self.faster();
         }
+    }
+
+    fn slower(&mut self) {
+        self.speed_idx = self.speed_idx.saturating_sub(1);
+    }
+
+    fn faster(&mut self) {
+        self.speed_idx = (self.speed_idx + 1).min(TIME_SPEEDS.len() - 1);
+    }
+
+    fn time_speed(&self) -> f64 {
+        f64::from(TIME_SPEEDS[self.speed_idx])
     }
 
     fn key(&mut self, code: KeyCode, pressed: bool, repeat: bool) {
@@ -146,6 +210,8 @@ impl SolarMode {
                     self.rig.set_mode(chase_camera::Mode::Chase, &self.ship.orientation);
                 }
             }
+            KeyCode::Minus => self.slower(),
+            KeyCode::Equal => self.faster(),
             KeyCode::KeyR => {
                 self.ship = ship::Ship::new(scene_solar::SHUTTLE_POS, scene_solar::shuttle_orientation());
             }
@@ -175,14 +241,15 @@ impl SolarMode {
         self.rig.zoom(controls::WHEEL_ZOOM.powf(notches));
     }
 
-    fn update(&mut self, time: f64, dt: f64, orbit: bool) {
+    fn update(&mut self, dt: f64, orbit: bool) {
+        self.sim_time += dt * self.time_speed();
         // Ship and camera each move from their own inputs.
         self.ship.update(&self.controls.ship_input(), dt);
         self.rig.update(&self.controls.camera_input(), dt);
         if orbit {
             self.rig.rotate(dt / ORBIT_PERIOD_SECS * TAU, 0.0);
         }
-        self.solar.animate(time);
+        self.solar.animate(self.sim_time);
         self.solar.set_shuttle_pose(self.ship.position, self.ship.orientation);
         self.solar.camera = if self.shuttle_view {
             self.rig.camera(self.ship.position, &self.ship.orientation)
@@ -196,11 +263,20 @@ impl SolarMode {
         self.solar.render(frame);
     }
 
-    fn draw_ui(&mut self, frame: &mut [u8], time: f64) {
+    fn draw_ui(&mut self, frame: &mut [u8]) {
         self.view_btn.label = if self.shuttle_view { "VIEW: SHUTTLE".into() } else { "VIEW: SYSTEM".into() };
         self.view_btn.active = true;
         self.view_btn.draw(frame, WIDTH, HEIGHT);
-        ui::draw_label(frame, WIDTH, HEIGHT, &scene_solar::date_label(time), 410, 10);
+        // DOWN / UP turn red at the slowest / fastest preset.
+        self.slower_btn.active = self.speed_idx > 0;
+        self.faster_btn.active = self.speed_idx < TIME_SPEEDS.len() - 1;
+        self.speed_label.label = format!("TIME: {}x", TIME_SPEEDS[self.speed_idx]);
+        for btn in [&self.slower_btn, &self.speed_label, &self.faster_btn] {
+            btn.draw(frame, WIDTH, HEIGHT);
+        }
+        ui::draw_label(frame, WIDTH, HEIGHT, &scene_solar::date_label(self.sim_time), 622, 10);
+        // Row 0 is the header, so the current speed is row speed_idx + 1.
+        ui::draw_table(frame, WIDTH, HEIGHT, &self.speed_table, self.speed_idx + 1, WIDTH as i32 - 10, 10);
         ui::draw_label(frame, WIDTH, HEIGHT, SOLAR_HELP, 10, HEIGHT as i32 - 36);
     }
 
@@ -257,9 +333,9 @@ pub fn run(start_solar: bool) -> Result<(), Box<dyn std::error::Error>> {
 
                 let frame = pixels.frame_mut();
                 if show_solar {
-                    solar.update(time, dt, orbit_enabled);
+                    solar.update(dt, orbit_enabled);
                     solar.render(frame);
-                    solar.draw_ui(frame, time);
+                    solar.draw_ui(frame);
                 } else {
                     shapes.update(time, dt, orbit_enabled);
                     shapes.render(frame);
