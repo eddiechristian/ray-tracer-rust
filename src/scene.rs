@@ -20,6 +20,14 @@ use crate::transform::Transform;
 use nalgebra::{Point3, UnitQuaternion, Vector2, Vector3};
 use rayon::prelude::*;
 
+/// Minimal context that `Material::compute_color` needs for recursive tracing and lighting.
+/// Implemented by both `Scene` and `SolarScene` so materials are scene-agnostic.
+pub trait SceneContext: Sync {
+    fn trace(&self, ray: &Ray, depth: u32, weight: f64) -> Color;
+    fn scene_lights(&self) -> &[Box<dyn Illuminate>];
+    fn scene_objects(&self) -> &ObjectList;
+}
+
 pub struct Scene {
     pub camera: Camera,
     pub objects: ObjectList,
@@ -315,6 +323,15 @@ impl Scene {
             None => Color::default(), // Background is black.
         }
     }
+}
+
+impl SceneContext for Scene {
+    fn trace(&self, ray: &Ray, depth: u32, weight: f64) -> Color { self.trace(ray, depth, weight) }
+    fn scene_lights(&self) -> &[Box<dyn Illuminate>] { &self.lights }
+    fn scene_objects(&self) -> &ObjectList { &self.objects }
+}
+
+impl Scene {  // re-open for render
 
     pub fn render(&self,  buffer: &mut [u8])
     {

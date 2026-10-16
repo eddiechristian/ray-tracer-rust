@@ -2,7 +2,7 @@ use nalgebra::Vector3;
 use crate::normal_map::NormalMap;
 use crate::object_base::IntersectionResult;
 use crate::ray::{Color, Ray};
-use crate::scene::Scene;
+use crate::scene::SceneContext;
 use crate::texture::{Flat, Texture};
 
 // Maximum number of reflection / refraction bounces after the camera ray (the C++ uses 3,
@@ -76,7 +76,7 @@ impl Material {
 
     /// Color seen along `ray`, which hit this material at `hit`. `depth` counts bounces so far;
     /// `weight` is how much this color contributes to the final pixel (1.0 for camera rays).
-    pub fn compute_color(&self, scene: &Scene, ray: &Ray, hit: &IntersectionResult, depth: u32, weight: f64) -> Color {
+    pub fn compute_color(&self, scene: &dyn SceneContext, ray: &Ray, hit: &IntersectionResult, depth: u32, weight: f64) -> Color {
         let normal = match &self.normal_map {
             Some(nm) => nm.perturb(&hit.local_normal, &hit.uv),
             None     => hit.local_normal,
@@ -86,8 +86,8 @@ impl Material {
         // Diffuse and specular contributions from every light that reaches this point.
         let mut diffuse_intensity = 0.0;
         let mut specular_intensity = 0.0;
-        for light in &scene.lights {
-            if let Some(illumination) = light.compute_illumination(hit, &normal, &scene.objects) {
+        for light in scene.scene_lights() {
+            if let Some(illumination) = light.compute_illumination(hit, &normal, scene.scene_objects()) {
                 diffuse_intensity += illumination.intensity;
 
                 // Phong: compare the light's mirror direction with the direction back to the viewer.
