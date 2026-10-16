@@ -9,7 +9,7 @@ use crate::composite::Composite;
 use crate::camera::Camera;
 use crate::object_base::{Intersect, IntersectionResult, ObjectList};
 use crate::material::Material;
-use crate::texture::Checker;
+use crate::texture::{Checker, ImageTexture};
 use crate::light_base::Illuminate;
 use crate::point_light::PointLight;
 use crate::ambient_light::AmbientLight;
@@ -133,11 +133,11 @@ impl Scene {
                 Checker::new(Color::new(1.0, 1.0, 1.0), Color::new(0.2, 0.2, 0.2))
                     .with_transform(Vector2::zeros(), 0.0, Vector2::new(12.0, 12.0)),
             ).with_reflectivity(0.25))),
-            // Glass: mostly refracted light (the floor seen through it, flipped), slight red tint.
-            Box::new(Sphere::new(sphere, Material::flat(Color::new(1.0, 0.6, 0.6))
+            // Earth texture test sphere.
+            Box::new(Sphere::new(sphere, Material::new(
+                ImageTexture::load("textures/2k_earth_daymap.jpg").expect("earth texture"))
                 .with_reflectivity(0.1)
-                .with_specular(1.0, 64.0)
-                .with_translucency(0.8, 1.5))),
+                .with_specular(0.4, 16.0))),
             Box::new(Cuboid::new(cuboid, Material::new(
                 Checker::new(Color::new(0.0, 1.0, 0.0), Color::new(0.0, 0.3, 0.0))
                     .with_transform(Vector2::zeros(), 0.0, Vector2::new(2.0, 2.0)),
