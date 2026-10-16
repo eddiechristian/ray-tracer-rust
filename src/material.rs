@@ -1,4 +1,5 @@
 use nalgebra::Vector3;
+use crate::normal_map::NormalMap;
 use crate::object_base::IntersectionResult;
 use crate::ray::{Color, Ray};
 use crate::scene::Scene;
@@ -29,6 +30,8 @@ pub struct Material {
     pub translucency: f64,
     /// Index of refraction (1.0 = air, ~1.33 water, ~1.5 glass).
     pub ior: f64,
+    /// Optional normal/bump map. When set, perturbs the surface normal before lighting.
+    pub normal_map: Option<Box<dyn NormalMap>>,
 }
 
 impl Material {
@@ -40,7 +43,13 @@ impl Material {
             shininess: 0.0,
             translucency: 0.0,
             ior: 1.0,
+            normal_map: None,
         }
+    }
+
+    pub fn with_normal_map(mut self, map: impl NormalMap + 'static) -> Self {
+        self.normal_map = Some(Box::new(map));
+        self
     }
 
     /// A plain matte material of one color.
@@ -68,14 +77,17 @@ impl Material {
     /// Color seen along `ray`, which hit this material at `hit`. `depth` counts bounces so far;
     /// `weight` is how much this color contributes to the final pixel (1.0 for camera rays).
     pub fn compute_color(&self, scene: &Scene, ray: &Ray, hit: &IntersectionResult, depth: u32, weight: f64) -> Color {
-        let normal = hit.local_normal;
+        let normal = match &self.normal_map {
+            Some(nm) => nm.perturb(&hit.local_normal, &hit.uv),
+            None     => hit.local_normal,
+        };
         let dir = ray.lab.normalize();
 
         // Diffuse and specular contributions from every light that reaches this point.
         let mut diffuse_intensity = 0.0;
         let mut specular_intensity = 0.0;
         for light in &scene.lights {
-            if let Some(illumination) = light.compute_illumination(hit, &scene.objects) {
+            if let Some(illumination) = light.compute_illumination(hit, &normal, &scene.objects) {
                 diffuse_intensity += illumination.intensity;
 
                 // Phong: compare the light's mirror direction with the direction back to the viewer.

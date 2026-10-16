@@ -10,6 +10,7 @@ use crate::camera::Camera;
 use crate::object_base::{Intersect, IntersectionResult, ObjectList};
 use crate::material::Material;
 use crate::texture::{Checker, ImageTexture};
+use crate::normal_map::ImageNormalMap;
 use crate::light_base::Illuminate;
 use crate::point_light::PointLight;
 use crate::ambient_light::AmbientLight;
@@ -94,7 +95,7 @@ impl Scene {
 
         let floor = Transform::new(Vector3::new(0.0, 0.0, -1.0), Vector3::new(6.0, 6.0, 1.0));
 
-        let sphere = Transform::new(Vector3::new(-1.8, 0.0, -0.55), Vector3::new(0.45, 0.45, 0.45));
+        let sphere = Transform::new(Vector3::new(-1.8, 0.0, -0.25), Vector3::new(0.75, 0.75, 0.75));
 
         let mut cuboid = Transform::new(Vector3::new(-0.6, 0.0, -0.6), Vector3::new(0.4, 0.4, 0.4));
         cuboid.set_rotation_euler(0.0, 0.0, FRAC_PI_6); // turn about z to show two faces
@@ -133,11 +134,16 @@ impl Scene {
                 Checker::new(Color::new(1.0, 1.0, 1.0), Color::new(0.2, 0.2, 0.2))
                     .with_transform(Vector2::zeros(), 0.0, Vector2::new(12.0, 12.0)),
             ).with_reflectivity(0.25))),
-            // Earth texture test sphere.
+            // Earth texture + normal map test sphere.
+            // Amplitude 3.0 exaggerates the terrain so ridges/valleys are clearly visible.
             Box::new(Sphere::new(sphere, Material::new(
                 ImageTexture::load("textures/2k_earth_daymap.jpg").expect("earth texture"))
                 .with_reflectivity(0.1)
-                .with_specular(0.4, 16.0))),
+                .with_specular(1.0, 32.0)
+                .with_normal_map(
+                    ImageNormalMap::load("textures/2k_earth_normal_map.tif").expect("earth normal map")
+                        .with_amplitude(4.0)
+                ))),
             Box::new(Cuboid::new(cuboid, Material::new(
                 Checker::new(Color::new(0.0, 1.0, 0.0), Color::new(0.0, 0.3, 0.0))
                     .with_transform(Vector2::zeros(), 0.0, Vector2::new(2.0, 2.0)),
@@ -221,8 +227,13 @@ impl Scene {
             ));
         }
 
+        // Camera aimed at the earth sphere, orbiting around it at distance 3.
+        let mut camera = Camera::default();
+        camera.set_position(Vector3::new(-1.8, -3.0, -0.25));
+        camera.set_look_at(Vector3::new(-1.8, 0.0, -0.25));
+
         Scene {
-            camera: Camera::default(),
+            camera,
             objects: ObjectList::from(objects),
             lights: vec![
                 Box::new(PointLight::new(Point3::new(5.0, -10.0, 5.0), 1.0)),

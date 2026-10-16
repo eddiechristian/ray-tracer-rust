@@ -1,6 +1,6 @@
 use std::f64::consts::FRAC_PI_2;
 
-use nalgebra::Point3;
+use nalgebra::{Point3, Vector3};
 use crate::light_base::Illuminate;
 use crate::light_base::IlluminationResult;
 use crate::object_base::{IntersectionResult, ObjectList};
@@ -25,19 +25,24 @@ impl PointLight {
 }
 
 impl Illuminate for PointLight {
-  fn compute_illumination(&self, intersection_result: &IntersectionResult, objects: &ObjectList) -> Option<IlluminationResult>{
+  fn compute_illumination(
+        &self,
+        intersection_result: &IntersectionResult,
+        normal: &Vector3<f64>,
+        objects: &ObjectList,
+  ) -> Option<IlluminationResult> {
      // Vector pointing from the intersection point to the light.
      let light_dir = (self.location.coords - intersection_result.intersection).normalize();
 
-     // Angle between the surface normal and the light direction (normal is assumed to be unit length).
-     let angle = intersection_result.local_normal.dot(&light_dir).clamp(-1.0, 1.0).acos();
+     // Diffuse angle uses the (possibly perturbed) normal passed in.
+     let angle = normal.dot(&light_dir).clamp(-1.0, 1.0).acos();
 
      // If the normal points away from the light, there is no illumination.
      if angle > FRAC_PI_2 {
         return None;
      }
 
-     // Shadow test: cast a ray toward the light; any hit closer than the light blocks it.
+     // Shadow ray offset uses the geometric normal to avoid self-shadowing artefacts.
      let start = intersection_result.intersection + intersection_result.local_normal * SHADOW_BIAS;
      let shadow_ray = Ray::new(start, self.location.coords);
      let light_dist = (self.location.coords - start).norm();

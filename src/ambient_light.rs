@@ -1,3 +1,4 @@
+use nalgebra::Vector3;
 use crate::light_base::Illuminate;
 use crate::light_base::IlluminationResult;
 use crate::object_base::{IntersectionResult, ObjectList};
@@ -15,7 +16,12 @@ impl AmbientLight {
 }
 
 impl Illuminate for AmbientLight {
-  fn compute_illumination(&self, _intersection_result: &IntersectionResult, _objects: &ObjectList) -> Option<IlluminationResult>{
+  fn compute_illumination(
+        &self,
+        _intersection_result: &IntersectionResult,
+        _normal: &Vector3<f64>,
+        _objects: &ObjectList,
+  ) -> Option<IlluminationResult> {
      Some(IlluminationResult { intensity: self.intensity, direction: None })
   }
 }

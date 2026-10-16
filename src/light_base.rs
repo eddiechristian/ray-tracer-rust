@@ -12,5 +12,13 @@ pub struct IlluminationResult {
 
 pub trait Illuminate: Send + Sync {
     /// `objects` is the whole scene, so lights can check whether anything casts a shadow.
-    fn compute_illumination(&self, intersection_result: &IntersectionResult, objects: &ObjectList) -> Option<IlluminationResult>;
+    /// `normal` is the (possibly bump/normal-map-perturbed) surface normal to use for
+    /// diffuse shading. The unperturbed `intersection_result.local_normal` is still used
+    /// for shadow ray offset so self-shadowing stays correct.
+    fn compute_illumination(
+        &self,
+        intersection_result: &IntersectionResult,
+        normal: &Vector3<f64>,
+        objects: &ObjectList,
+    ) -> Option<IlluminationResult>;
 }

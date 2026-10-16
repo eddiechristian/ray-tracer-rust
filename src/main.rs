@@ -1,5 +1,6 @@
 mod camera;
 mod ray;
+mod normal_map;
 mod ui;
 mod object_base;
 mod sphere;
@@ -73,6 +74,37 @@ fn run_benchmark(frames: u32) {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
+
+    if args.get(1).map(String::as_str) == Some("--diagnose") {
+        let img = image::open("textures/2k_earth_normal_map.tif")
+            .expect("open tif").into_rgba8();
+        println!("Normal map size: {}x{}", img.width(), img.height());
+        let (mut rmin, mut rmax, mut gmin, mut gmax) = (255u8, 0u8, 255u8, 0u8);
+        let (mut rmin_xy, mut rmax_xy) = ((0u32,0u32),(0u32,0u32));
+        for y in 0..img.height() {
+            for x in 0..img.width() {
+                let p = img.get_pixel(x, y);
+                if p[0] < rmin { rmin = p[0]; rmin_xy = (x,y); }
+                if p[0] > rmax { rmax = p[0]; rmax_xy = (x,y); }
+                if p[1] < gmin { gmin = p[1]; }
+                if p[1] > gmax { gmax = p[1]; }
+            }
+        }
+        println!("R range: {rmin}..{rmax}  (min at {:?}, max at {:?})", rmin_xy, rmax_xy);
+        println!("G range: {gmin}..{gmax}");
+        return Ok(());
+    }
+
+    if args.get(1).map(String::as_str) == Some("--save") {
+        let scene = scene::Scene::new();
+        let mut buffer = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
+        scene.render(&mut buffer);
+        let img = image::RgbaImage::from_raw(WIDTH, HEIGHT, buffer).expect("buffer size");
+        img.save("frame.png").expect("save frame.png");
+        println!("Saved frame.png");
+        return Ok(());
+    }
+
     if args.get(1).map(String::as_str) == Some("--bench") {
         let frames = match args.get(2) {
             Some(n) => n.parse().map_err(|_| format!("--bench expects a frame count, got '{n}'"))?,
