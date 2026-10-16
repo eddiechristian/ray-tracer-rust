@@ -34,6 +34,9 @@ pub struct Material {
     pub normal_map: Option<Box<dyn NormalMap>>,
     /// Self-lit (e.g. the Sun): the texture colour is returned as-is, ignoring lights.
     pub emissive: bool,
+    /// Extra diffuse light from the viewer's direction, so the side you're looking at is
+    /// never black (0.0 = none). For objects that must stay visible, like the shuttle.
+    pub headlight: f64,
 }
 
 impl Material {
@@ -47,6 +50,7 @@ impl Material {
             ior: 1.0,
             normal_map: None,
             emissive: false,
+            headlight: 0.0,
         }
     }
 
@@ -58,6 +62,13 @@ impl Material {
     /// Makes the surface glow with its texture colour instead of being lit.
     pub fn with_emissive(mut self) -> Self {
         self.emissive = true;
+        self
+    }
+
+    /// Lights the surface from wherever it's viewed from, with `strength` × cos(angle between
+    /// the normal and the view direction). Casts no shadows and costs no extra rays.
+    pub fn with_headlight(mut self, strength: f64) -> Self {
+        self.headlight = strength;
         self
     }
 
@@ -113,6 +124,10 @@ impl Material {
             }
         }
 
+        if self.headlight > 0.0 {
+            diffuse_intensity += self.headlight * normal.dot(&-dir).max(0.0);
+        }
+
         let mut color = self.texture.color(&hit.uv) * diffuse_intensity;
 
         // Share of the final pixel carried by each secondary ray: reflection is mixed in, then
@@ -164,4 +179,52 @@ fn offset_ray(hit: &IntersectionResult, dir: &Vector3<f64>) -> Ray {
     let side = if dir.dot(&hit.local_normal) > 0.0 { 1.0 } else { -1.0 };
     let start = hit.intersection + hit.local_normal * (side * SURFACE_BIAS);
     Ray::new(start, start + dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::light_base::Illuminate;
+    use crate::object_base::ObjectList;
+
+    /// A scene with no lights and no objects: only the headlight can light anything.
+    struct Dark {
+        lights: Vec<Box<dyn Illuminate>>,
+        objects: ObjectList,
+    }
+
+    impl SceneContext for Dark {
+        fn trace(&self, _ray: &Ray, _depth: u32, _weight: f64) -> Color {
+            Color::default()
+        }
+        fn scene_lights(&self) -> &[Box<dyn Illuminate>] {
+            &self.lights
+        }
+        fn scene_objects(&self) -> &ObjectList {
+            &self.objects
+        }
+    }
+
+    #[test]
+    fn headlight_lights_the_side_facing_the_viewer() {
+        let scene = Dark { lights: Vec::new(), objects: ObjectList::new() };
+        let white = Color::new(1.0, 1.0, 1.0);
+        let lit = Material::flat(white).with_headlight(0.4);
+        let unlit = Material::flat(white);
+        // Viewer looking down -z at a surface whose normal is tilted 60° from +z.
+        let ray = Ray::new(Vector3::new(0.0, 0.0, 5.0), Vector3::zeros());
+        let normal = Vector3::new(60f64.to_radians().sin(), 0.0, 60f64.to_radians().cos());
+        let hit = |material| IntersectionResult {
+            intersection: Vector3::zeros(),
+            local_normal: normal,
+            uv: nalgebra::Vector2::zeros(),
+            material,
+        };
+        let c = lit.compute_color(&scene, &ray, &hit(&lit), 0, 1.0);
+        assert!((c.r - 0.4 * 0.5).abs() < 1e-9, "cos 60° × 0.4, got {}", c.r);
+        assert_eq!(unlit.compute_color(&scene, &ray, &hit(&unlit), 0, 1.0).r, 0.0);
+        // Seen from behind the surface: no headlight.
+        let behind = Ray::new(Vector3::new(0.0, 0.0, -5.0), Vector3::zeros());
+        assert_eq!(lit.compute_color(&scene, &behind, &hit(&lit), 0, 1.0).r, 0.0);
+    }
 }

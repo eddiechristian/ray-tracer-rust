@@ -66,6 +66,17 @@ impl Aabb {
     /// costs multiplies and comparisons instead of six divisions.
     #[inline]
     pub fn entry_distance_inv(&self, origin: &Vector3<f64>, inv_dir: &Vector3<f64>) -> Option<f64> {
+        self.span_inv(origin, inv_dir).map(|(entry, _)| entry)
+    }
+
+    /// Where the ray enters and leaves the box, as `(entry, exit)` distances along it
+    /// (entry is 0.0 if the ray starts inside). For ray marching, which needs both ends.
+    pub fn span(&self, origin: &Vector3<f64>, dir: &Vector3<f64>) -> Option<(f64, f64)> {
+        self.span_inv(origin, &inverse_direction(dir))
+    }
+
+    #[inline]
+    fn span_inv(&self, origin: &Vector3<f64>, inv_dir: &Vector3<f64>) -> Option<(f64, f64)> {
         // Slab method, as in Cuboid::test_intersection. Starting t_near at 0 ignores the part
         // of the ray behind its origin. Plain comparisons are used instead of f64::min/max,
         // which are slower because of their NaN handling.
@@ -88,7 +99,7 @@ impl Aabb {
                 t_far = hi;
             }
         }
-        if t_near <= t_far { Some(t_near) } else { None }
+        if t_near <= t_far { Some((t_near, t_far)) } else { None }
     }
 }
 
@@ -108,6 +119,17 @@ mod tests {
     fn ray(origin: [f64; 3], dir: [f64; 3]) -> Ray {
         let o = Vector3::from(origin);
         Ray::new(o, o + Vector3::from(dir))
+    }
+
+    #[test]
+    fn span_gives_entry_and_exit() {
+        let b = unit_box();
+        let (entry, exit) = b.span(&Vector3::new(0.0, -5.0, 0.0), &Vector3::new(0.0, 1.0, 0.0)).unwrap();
+        assert!((entry - 4.0).abs() < 1e-5 && (exit - 6.0).abs() < 1e-5);
+        // From inside: entry 0, exit at the far face.
+        let (entry, exit) = b.span(&Vector3::zeros(), &Vector3::new(1.0, 0.0, 0.0)).unwrap();
+        assert!(entry == 0.0 && (exit - 1.0).abs() < 1e-5);
+        assert_eq!(b.span(&Vector3::new(3.0, -5.0, 0.0), &Vector3::new(0.0, 1.0, 0.0)), None);
     }
 
     #[test]

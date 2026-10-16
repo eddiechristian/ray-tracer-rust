@@ -5,6 +5,9 @@ mod scene_solar;
 mod ui;
 mod object_base;
 mod sphere;
+mod sdf;
+mod ray_march;
+mod shuttle;
 mod plane;
 mod cuboid;
 mod cylinder;
@@ -49,17 +52,17 @@ fn orbit_position(center: Vector3<f64>, start: Vector3<f64>, angle: f64) -> Vect
 
 /// Renders `frames` frames off-screen and prints timing; no window is opened.
 /// Usage: `cargo run --release -- --bench [frames]` (default 10).
-fn run_benchmark(frames: u32) {
-    let scene = scene::Scene::new();
+/// Times `frames` renders of `render` (a scene's render method), after one warm-up frame.
+fn run_benchmark(frames: u32, render: impl Fn(&mut [u8])) {
     let mut buffer = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
 
     // One untimed warm-up frame (page faults, thread pool start-up, caches).
-    scene.render(&mut buffer);
+    render(&mut buffer);
 
     let mut times_ms: Vec<f64> = (0..frames)
         .map(|_| {
             let start = Instant::now();
-            scene.render(&mut buffer);
+            render(&mut buffer);
             start.elapsed().as_secs_f64() * 1000.0
         })
         .collect();
@@ -71,6 +74,18 @@ fn run_benchmark(frames: u32) {
         frames, WIDTH, HEIGHT, mean, 1000.0 / mean,
         times_ms[0], times_ms[times_ms.len() / 2], times_ms[times_ms.len() - 1],
     );
+}
+
+/// Frame count for `--bench [frames]` (default 10).
+fn bench_frames(arg: Option<&String>) -> Result<u32, Box<dyn std::error::Error>> {
+    let frames = match arg {
+        Some(n) => n.parse().map_err(|_| format!("--bench expects a frame count, got '{n}'"))?,
+        None => 10,
+    };
+    if frames == 0 {
+        return Err("--bench frame count must be at least 1".into());
+    }
+    Ok(frames)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -111,14 +126,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.get(1).map(String::as_str) == Some("--bench") {
-        let frames = match args.get(2) {
-            Some(n) => n.parse().map_err(|_| format!("--bench expects a frame count, got '{n}'"))?,
-            None => 10,
-        };
-        if frames == 0 {
-            return Err("--bench frame count must be at least 1".into());
-        }
-        run_benchmark(frames);
+        let frames = bench_frames(args.get(2))?;
+        let scene = scene::Scene::new();
+        run_benchmark(frames, |buffer| scene.render(buffer));
         return Ok(());
     }
 
@@ -238,6 +248,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Interactive solar-system scene, sharing the same orbit/UI logic as the main scene.
 fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    // Off-screen timing: `--solar --bench [frames]`, at the same moment as `--save`.
+    if args.get(2).map(String::as_str) == Some("--bench") {
+        let frames = bench_frames(args.get(3))?;
+        let mut solar = scene_solar::SolarScene::new();
+        solar.animate(5.0);
+        run_benchmark(frames, |buffer| solar.render(buffer));
+        return Ok(());
+    }
+
+    // Close-up of the shuttle: `--solar --closeup`, saved to frame_shuttle.png.
+    if args.get(2).map(String::as_str) == Some("--closeup") {
+        let mut solar = scene_solar::SolarScene::new();
+        solar.animate(5.0);
+        // Above, behind and to the left of the shuttle in its own frame, on the sunlit side.
+        let target = scene_solar::SHUTTLE_POS;
+        let frame = scene_solar::shuttle_orientation();
+        solar.camera = camera::Camera::new(
+            target + frame * Vector3::new(-0.45, -0.55, 0.55),
+            target,
+            frame * Vector3::z(),
+        );
+        solar.camera.set_horiz_size(0.32);
+        let mut buffer = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
+        solar.render(&mut buffer);
+        let img = image::RgbaImage::from_raw(WIDTH, HEIGHT, buffer).expect("buffer size");
+        img.save("frame_shuttle.png").expect("save");
+        println!("Saved frame_shuttle.png");
+        return Ok(());
+    }
+
     // Offline frame save: `--solar --save`
     if args.get(2).map(String::as_str) == Some("--save") {
         let mut solar = scene_solar::SolarScene::new();
@@ -262,9 +302,13 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         Pixels::new(WIDTH, HEIGHT, surface_texture)?
     };
 
+    // Camera paths, switched with the VIEW button. Temporarily starts on the shuttle;
+    // set this to false to start on the whole system again.
+    let mut shuttle_view = true;
+    let view = |shuttle: bool| if shuttle { &scene_solar::SHUTTLE_VIEW } else { &scene_solar::SYSTEM_VIEW };
+
     let mut solar = scene_solar::SolarScene::new();
-    let orbit_center = solar.camera.look_at();
-    let orbit_start  = solar.camera.position();
+    solar.camera = view(shuttle_view).camera();
     let start_time   = Instant::now();
 
     let mut orbit_enabled  = true;
@@ -272,6 +316,7 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut orbit_time     = 0.0f64;
     let mut last_wall_time = 0.0f64;
     let mut orbit_btn = ui::Button::new("ORBIT: ON", 10, 10, 110, 26);
+    let mut view_btn = ui::Button::new("", 130, 10, 130, 26);
 
     let mut frame_count: u32 = 0;
     let mut fps_timer = Instant::now();
@@ -290,6 +335,10 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 let (cx, cy) = cursor_pos;
                 if orbit_btn.contains(cx, cy) { orbit_enabled = !orbit_enabled; }
+                if view_btn.contains(cx, cy) {
+                    shuttle_view = !shuttle_view;
+                    solar.camera = view(shuttle_view).camera();
+                }
             }
             Event::AboutToWait => {
                 let time = start_time.elapsed().as_secs_f64();
@@ -297,9 +346,11 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 last_wall_time = time;
                 if orbit_enabled {
                     orbit_time += dt;
-                    let angle = orbit_time / ORBIT_PERIOD_SECS * TAU;
-                    solar.camera.set_position(orbit_position(orbit_center, orbit_start, angle));
                 }
+                // Both views share the orbit angle, so switching keeps the direction of view.
+                let path = view(shuttle_view);
+                let angle = orbit_time / ORBIT_PERIOD_SECS * TAU;
+                solar.camera.set_position(orbit_position(path.center, path.start, angle));
                 solar.animate(time);
 
                 let frame = pixels.frame_mut();
@@ -308,7 +359,10 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 orbit_btn.label  = if orbit_enabled { "ORBIT: ON".into() } else { "ORBIT: OFF".into() };
                 orbit_btn.active = orbit_enabled;
                 orbit_btn.draw(frame, WIDTH, HEIGHT);
-                ui::draw_label(frame, WIDTH, HEIGHT, &scene_solar::date_label(time), 130, 10);
+                view_btn.label  = if shuttle_view { "VIEW: SHUTTLE".into() } else { "VIEW: SYSTEM".into() };
+                view_btn.active = true;
+                view_btn.draw(frame, WIDTH, HEIGHT);
+                ui::draw_label(frame, WIDTH, HEIGHT, &scene_solar::date_label(time), 270, 10);
 
                 if let Err(err) = pixels.render() {
                     println!("Render error: {err}");
@@ -320,7 +374,8 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 if elapsed >= 1.0 {
                     let fps = frame_count as f64 / elapsed;
                     let orb = if orbit_enabled { "ON" } else { "OFF" };
-                    window.set_title(&format!("Solar System - {fps:.1} FPS | Orbit: {orb}"));
+                    let v = if shuttle_view { "shuttle" } else { "system" };
+                    window.set_title(&format!("Solar System - {fps:.1} FPS | Orbit: {orb} | View: {v}"));
                     frame_count = 0;
                     fps_timer = Instant::now();
                 }
@@ -330,3 +385,5 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     })?;
     Ok(())
 }
+
+

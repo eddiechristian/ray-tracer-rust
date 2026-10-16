@@ -8,6 +8,7 @@ use crate::object_base::{Intersect, IntersectionResult, ObjectList};
 use crate::point_light::PointLight;
 use crate::ambient_light::AmbientLight;
 use crate::ray::{Color, Ray};
+use crate::shuttle;
 use crate::scene::SceneContext;
 use crate::sphere::Sphere;
 use crate::texture::ImageTexture;
@@ -29,6 +30,51 @@ const SUN_R:   f64 = 0.5;        // real Sun is ~109× Earth; shrunk so it doesn
 const EARTH_R: f64 = 0.22;
 const MOON_R:  f64 = 0.060;      // 0.27 × Earth diameter
 const MARS_R:  f64 = 0.117;      // 0.53 × Earth diameter
+
+// Space Shuttle orbiter (ray marched, see shuttle.rs). Its model is 2 units long, so this
+// scale makes it 0.3 long.
+pub const SHUTTLE_POS: Vector3<f64> = Vector3::new(2.05, -0.25, 0.3);
+const SHUTTLE_SCALE: f64 = 0.15;
+// Nose up 30° (climbing away from the Sun) so its top faces the light, and turned a little
+// toward the camera.
+const SHUTTLE_PITCH: f64 = 30.0 * DEG;
+const SHUTTLE_YAW:   f64 = -25.0 * DEG;
+
+// ---------------------------------------------------------------------------
+// Camera views
+// ---------------------------------------------------------------------------
+
+/// A camera path: the camera circles `center` about the vertical, starting at `start` and
+/// always looking at `center` (main.rs drives the circling; see ORBIT_PERIOD_SECS).
+pub struct CameraView {
+    pub center: Vector3<f64>,
+    pub start: Vector3<f64>,
+    pub horiz_size: f64,
+}
+
+/// The whole system: above the ecliptic, looking at a point between Earth's and Mars's
+/// orbits so the Sun, Earth and Mars fit in frame.
+pub const SYSTEM_VIEW: CameraView = CameraView {
+    center: Vector3::new(1.5, 0.0, 0.0),
+    start: Vector3::new(0.0, -5.5, 3.5),
+    horiz_size: 0.45,
+};
+
+/// Close around the shuttle, a little above it.
+pub const SHUTTLE_VIEW: CameraView = CameraView {
+    center: SHUTTLE_POS,
+    start: Vector3::new(1.8, -1.05, 0.75), // SHUTTLE_POS + (-0.25, -0.8, 0.45)
+    horiz_size: 0.32,
+};
+
+impl CameraView {
+    /// The camera at `start`, looking at `center`, z up.
+    pub fn camera(&self) -> Camera {
+        let mut camera = Camera::new(self.start, self.center, Vector3::z());
+        camera.set_horiz_size(self.horiz_size);
+        camera
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Periods (screen seconds)
@@ -152,6 +198,12 @@ impl Orbit {
     }
 }
 
+/// The shuttle's rotation from its model space (nose +x, z up) to the scene.
+pub fn shuttle_orientation() -> UnitQuaternion<f64> {
+    UnitQuaternion::from_axis_angle(&Vector3::z_axis(), SHUTTLE_YAW)
+        * UnitQuaternion::from_axis_angle(&Vector3::y_axis(), -SHUTTLE_PITCH)
+}
+
 /// Calendar date at `time` screen-seconds after J2000 (1 Jan 2000, 12:00),
 /// e.g. "14 Mar 2000". One orbit of Earth is 365.256 solar days.
 pub fn date_label(time: f64) -> String {
@@ -245,6 +297,11 @@ impl SolarScene {
             .with_specular(0.2, 8.0),
         )));
 
+        // --- Space Shuttle ---
+        let mut shuttle_transform = Transform::new(SHUTTLE_POS, Vector3::repeat(SHUTTLE_SCALE));
+        shuttle_transform.set_rotation(shuttle_orientation());
+        objects.push(Box::new(shuttle::shuttle(shuttle_transform)));
+
         // --- Sun --- self-lit, so it glows with its texture regardless of the lights.
         let sun: Vec<Box<dyn Intersect>> = vec![Box::new(Sphere::new(
             Transform::new(Vector3::zeros(), Vector3::repeat(SUN_R)),
@@ -252,16 +309,7 @@ impl SolarScene {
                 .with_emissive(),
         ))];
 
-        // Camera: above the ecliptic plane, looking at the origin (Sun).
-        // The orbit button will circle it around the Z axis at this radius.
-        // Camera above the ecliptic, looking at a point between Earth and Mars
-        // so all three bodies fit in frame at a comfortable zoom level.
-        let mut camera = Camera::new(
-            Vector3::new(0.0, -5.5, 3.5),
-            Vector3::new(1.5, 0.0, 0.0),  // midpoint toward Earth/Mars orbit band
-            Vector3::new(0.0, 0.0, 1.0),
-        );
-        camera.set_horiz_size(0.45);
+        let camera = SYSTEM_VIEW.camera();
 
         let mut scene = SolarScene {
             camera,
@@ -411,6 +459,12 @@ mod tests {
     }
 
     #[test]
+    fn shuttle_view_circles_the_shuttle() {
+        assert_eq!(SHUTTLE_VIEW.center, SHUTTLE_POS);
+        assert!((SHUTTLE_VIEW.start - (SHUTTLE_POS + Vector3::new(-0.25, -0.8, 0.45))).norm() < 1e-12);
+    }
+
+    #[test]
     fn earth_starts_at_j2000_position() {
         // On 1 Jan 2000 Earth was at heliocentric longitude ~100° and 0.983 AU (near perihelion).
         let p = EARTH_ORBIT.position(0.0);
@@ -418,3 +472,4 @@ mod tests {
         assert!((p.norm() / AU - 0.983).abs() < 0.001);
     }
 }
+
