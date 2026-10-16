@@ -96,11 +96,14 @@ const SOLAR_HELP: &str = "W/S A/D Q/E steer  Shift/Ctrl thrust/brake  R reset  |
 
 /// Time-speed presets for the solar clock (planets, Moon, date), as multiples of normal
 /// (`EARTH_YEAR` per year). The DOWN/UP buttons and the -/= keys step through them.
-const TIME_SPEEDS: [u32; 6] = [1, 10, 25, 50, 100, 400];
+const TIME_SPEEDS: [f64; 8] = [0.01, 0.1, 1.0, 10.0, 25.0, 50.0, 100.0, 400.0];
+const NORMAL_SPEED: usize = 2; // 1x, the starting speed
 
 /// "0.05 s", "3.7 s", "3.0 min": a screen duration for the speed table.
 fn format_secs(secs: f64) -> String {
-    if secs >= 60.0 {
+    if secs >= 3600.0 {
+        format!("{:.1} h", secs / 3600.0)
+    } else if secs >= 60.0 {
         format!("{:.1} min", secs / 60.0)
     } else if secs >= 1.0 {
         format!("{secs:.1} s")
@@ -115,10 +118,9 @@ fn speed_table() -> Vec<String> {
     let year = scene_solar::EARTH_YEAR;
     let row = |cols: [&str; 5]| format!("{:<6}{:>9}{:>10}{:>10}{:>10}", cols[0], cols[1], cols[2], cols[3], cols[4]);
     let mut rows = vec![row(["Speed", "Day", "Month", "Year", "Moon"])];
-    for &speed in &TIME_SPEEDS {
-        let s = f64::from(speed);
+    for &s in &TIME_SPEEDS {
         rows.push(row([
-            &format!("{speed}x"),
+            &format!("{s}x"),
             &format_secs(year / scene_solar::DAYS_PER_YEAR / s),
             &format_secs(year / 12.0 / s),
             &format_secs(year / s),
@@ -164,7 +166,7 @@ impl SolarMode {
             dragging: false,
             view_btn: ui::Button::new("", 270, 10, 130, 26),
             sim_time: 0.0,
-            speed_idx: 0,
+            speed_idx: NORMAL_SPEED,
             slower_btn: ui::Button::new("DOWN", 410, 10, 50, 26),
             speed_label: ui::Button::new("", 466, 10, 100, 26),
             faster_btn: ui::Button::new("UP", 572, 10, 40, 26),
@@ -202,7 +204,7 @@ impl SolarMode {
     }
 
     fn time_speed(&self) -> f64 {
-        f64::from(TIME_SPEEDS[self.speed_idx])
+        TIME_SPEEDS[self.speed_idx]
     }
 
     fn key(&mut self, code: KeyCode, pressed: bool, repeat: bool) {
