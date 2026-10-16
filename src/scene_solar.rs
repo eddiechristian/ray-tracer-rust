@@ -1,6 +1,7 @@
 use std::f64::consts::TAU;
 
 use crate::camera::Camera;
+use crate::chase_camera::ChaseCamera;
 use crate::light_base::Illuminate;
 use crate::material::Material;
 use crate::normal_map::ImageNormalMap;
@@ -32,7 +33,8 @@ const MOON_R:  f64 = 0.060;      // 0.27 × Earth diameter
 const MARS_R:  f64 = 0.117;      // 0.53 × Earth diameter
 
 // Space Shuttle orbiter (ray marched, see shuttle.rs). Its model is 2 units long, so this
-// scale makes it 0.3 long.
+// scale makes it 0.3 long. SHUTTLE_POS and shuttle_orientation() are where it starts; the
+// player flies it from there (ship.rs, `SolarScene::set_shuttle_pose`).
 pub const SHUTTLE_POS: Vector3<f64> = Vector3::new(2.05, -0.25, 0.3);
 const SHUTTLE_SCALE: f64 = 0.15;
 // Nose up 30° (climbing away from the Sun) so its top faces the light, and turned a little
@@ -60,12 +62,17 @@ pub const SYSTEM_VIEW: CameraView = CameraView {
     horiz_size: 0.45,
 };
 
-/// Close around the shuttle, a little above it.
-pub const SHUTTLE_VIEW: CameraView = CameraView {
-    center: SHUTTLE_POS,
-    start: Vector3::new(1.8, -1.05, 0.75), // SHUTTLE_POS + (-0.25, -0.8, 0.45)
-    horiz_size: 0.32,
-};
+/// The camera rig around the shuttle, starting a little above it and to its side.
+pub fn shuttle_camera() -> ChaseCamera {
+    ChaseCamera::from_offset(Vector3::new(-0.25, -0.8, 0.45), 0.32)
+}
+
+/// The window's camera rig: starts exactly at `SYSTEM_VIEW`, and can be swung around and
+/// zoomed from a close-up of the shuttle out to well beyond Mars's orbit.
+pub fn system_camera() -> ChaseCamera {
+    ChaseCamera::from_offset(SYSTEM_VIEW.start - SYSTEM_VIEW.center, SYSTEM_VIEW.horiz_size)
+        .with_distance_limits(0.35, 20.0)
+}
 
 impl CameraView {
     /// The camera at `start`, looking at `center`, z up.
@@ -256,6 +263,7 @@ pub struct SolarScene {
     earth_idx: usize,
     moon_idx:  usize,
     mars_idx:  usize,
+    shuttle_idx: usize,
 }
 
 impl SolarScene {
@@ -300,6 +308,7 @@ impl SolarScene {
         // --- Space Shuttle ---
         let mut shuttle_transform = Transform::new(SHUTTLE_POS, Vector3::repeat(SHUTTLE_SCALE));
         shuttle_transform.set_rotation(shuttle_orientation());
+        let shuttle_idx = objects.len();
         objects.push(Box::new(shuttle::shuttle(shuttle_transform)));
 
         // --- Sun --- self-lit, so it glows with its texture regardless of the lights.
@@ -327,6 +336,7 @@ impl SolarScene {
             earth_idx,
             moon_idx,
             mars_idx,
+            shuttle_idx,
         };
         scene.animate(0.0); // place everything at its J2000 position
         scene
@@ -360,6 +370,14 @@ impl SolarScene {
             t.set_rotation(axial_tilt(MARS_TILT) * spin(time * TAU / MARS_DAY));
         }
 
+        self.objects.refresh_bounds();
+    }
+
+    /// Moves the shuttle (e.g. to where the player has flown it).
+    pub fn set_shuttle_pose(&mut self, position: Vector3<f64>, orientation: UnitQuaternion<f64>) {
+        let t = self.objects.get_mut(self.shuttle_idx).unwrap().transform_mut();
+        t.set_translation(position);
+        t.set_rotation(orientation);
         self.objects.refresh_bounds();
     }
 
@@ -459,9 +477,17 @@ mod tests {
     }
 
     #[test]
-    fn shuttle_view_circles_the_shuttle() {
-        assert_eq!(SHUTTLE_VIEW.center, SHUTTLE_POS);
-        assert!((SHUTTLE_VIEW.start - (SHUTTLE_POS + Vector3::new(-0.25, -0.8, 0.45))).norm() < 1e-12);
+    fn shuttle_camera_starts_beside_and_above_the_shuttle() {
+        let camera = shuttle_camera().camera(SHUTTLE_POS, &shuttle_orientation());
+        let offset = camera.position() - SHUTTLE_POS;
+        assert!((offset - Vector3::new(-0.25, -0.8, 0.45)).norm() < 0.01, "{offset:?}");
+        assert_eq!(camera.look_at(), SHUTTLE_POS);
+    }
+
+    #[test]
+    fn system_camera_starts_at_the_system_view() {
+        let camera = system_camera().camera(SYSTEM_VIEW.center, &UnitQuaternion::identity());
+        assert!((camera.position() - SYSTEM_VIEW.start).norm() < 1e-9);
     }
 
     #[test]

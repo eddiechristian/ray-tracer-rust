@@ -8,6 +8,9 @@ mod sphere;
 mod sdf;
 mod ray_march;
 mod shuttle;
+mod ship;
+mod chase_camera;
+mod controls;
 mod plane;
 mod cuboid;
 mod cylinder;
@@ -30,8 +33,9 @@ use nalgebra::Vector3;
 use pixels::{Pixels, SurfaceTexture};
 use winit::{
     dpi::PhysicalSize,
-    event::{ElementState, Event, MouseButton, WindowEvent},
+    event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
+    keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
 
@@ -248,11 +252,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Interactive solar-system scene, sharing the same orbit/UI logic as the main scene.
 fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    // Off-screen timing: `--solar --bench [frames]`, at the same moment as `--save`.
-    if args.get(2).map(String::as_str) == Some("--bench") {
+    // Off-screen timing: `--solar --bench [frames]`, at the same moment as `--save`;
+    // `--solar --bench-shuttle [frames]` from the shuttle camera's starting view instead.
+    if matches!(args.get(2).map(String::as_str), Some("--bench" | "--bench-shuttle")) {
         let frames = bench_frames(args.get(3))?;
         let mut solar = scene_solar::SolarScene::new();
         solar.animate(5.0);
+        if args[2] == "--bench-shuttle" {
+            solar.camera = scene_solar::shuttle_camera()
+                .camera(scene_solar::SHUTTLE_POS, &scene_solar::shuttle_orientation());
+        }
         run_benchmark(frames, |buffer| solar.render(buffer));
         return Ok(());
     }
@@ -302,21 +311,26 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         Pixels::new(WIDTH, HEIGHT, surface_texture)?
     };
 
-    // Camera paths, switched with the VIEW button. Temporarily starts on the shuttle;
-    // set this to false to start on the whole system again.
-    let mut shuttle_view = true;
-    let view = |shuttle: bool| if shuttle { &scene_solar::SHUTTLE_VIEW } else { &scene_solar::SYSTEM_VIEW };
+    // One camera rig, steered with the mouse / arrow keys independently of the ship. VIEW
+    // switches what it circles: the system's centre point or the ship (`shuttle_view`),
+    // keeping its zoom and direction. C toggles free / chase (chase implies the ship).
+    // Starts on the whole system.
+    let mut shuttle_view = false;
 
     let mut solar = scene_solar::SolarScene::new();
-    solar.camera = view(shuttle_view).camera();
+    let mut ship = ship::Ship::new(scene_solar::SHUTTLE_POS, scene_solar::shuttle_orientation());
+    let mut rig = scene_solar::system_camera();
+    let mut controls = controls::Controls::default();
     let start_time   = Instant::now();
 
     let mut orbit_enabled  = true;
     let mut cursor_pos     = (0.0f64, 0.0f64);
-    let mut orbit_time     = 0.0f64;
+    let mut dragging       = false; // right mouse button held: orbit the camera
     let mut last_wall_time = 0.0f64;
     let mut orbit_btn = ui::Button::new("ORBIT: ON", 10, 10, 110, 26);
     let mut view_btn = ui::Button::new("", 130, 10, 130, 26);
+    const HELP: &str = "W/S A/D Q/E steer  Shift/Ctrl thrust/brake  R reset  |  \
+                        right-drag/arrows orbit  wheel/PgUp/PgDn zoom  C free/chase";
 
     let mut frame_count: u32 = 0;
     let mut fps_timer = Instant::now();
@@ -325,8 +339,54 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     event_loop.run(move |event, elwt| {
         match event {
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => elwt.exit(),
+            Event::WindowEvent { event: WindowEvent::Focused(false), .. } => {
+                // Key releases while unfocused never arrive: don't keep flying on a stuck key.
+                controls.release_all();
+                dragging = false;
+            }
+            Event::WindowEvent { event: WindowEvent::KeyboardInput { event, .. }, .. } => {
+                if let PhysicalKey::Code(code) = event.physical_key {
+                    let pressed = event.state == ElementState::Pressed;
+                    controls.key(code, pressed);
+                    if pressed && !event.repeat {
+                        match code {
+                            // Chase follows the ship's heading, so from the system view it
+                            // switches to the ship too. The camera doesn't jump either way.
+                            KeyCode::KeyC => {
+                                if shuttle_view {
+                                    rig.toggle_mode(&ship.orientation);
+                                } else {
+                                    shuttle_view = true;
+                                    rig.set_mode(chase_camera::Mode::Chase, &ship.orientation);
+                                }
+                            }
+                            KeyCode::KeyR => {
+                                ship = ship::Ship::new(scene_solar::SHUTTLE_POS, scene_solar::shuttle_orientation());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
             Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } => {
+                if dragging {
+                    // Drag right: the camera swings right around the ship; drag up: it rises.
+                    let (dx, dy) = (position.x - cursor_pos.0, position.y - cursor_pos.1);
+                    rig.rotate(dx * controls::DRAG_RADIANS_PER_PIXEL, -dy * controls::DRAG_RADIANS_PER_PIXEL);
+                }
                 cursor_pos = (position.x, position.y);
+            }
+            Event::WindowEvent { event: WindowEvent::MouseWheel { delta, .. }, .. } => {
+                let notches = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y as f64,
+                    MouseScrollDelta::PixelDelta(p) => p.y / 40.0,
+                };
+                rig.zoom(controls::WHEEL_ZOOM.powf(notches));
+            }
+            Event::WindowEvent {
+                event: WindowEvent::MouseInput { state, button: MouseButton::Right, .. }, ..
+            } => {
+                dragging = state == ElementState::Pressed;
             }
             Event::WindowEvent {
                 event: WindowEvent::MouseInput {
@@ -336,22 +396,34 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 let (cx, cy) = cursor_pos;
                 if orbit_btn.contains(cx, cy) { orbit_enabled = !orbit_enabled; }
                 if view_btn.contains(cx, cy) {
+                    // Back to the system's centre point: chase only applies to the ship.
+                    if shuttle_view {
+                        rig.set_mode(chase_camera::Mode::Free, &ship.orientation);
+                    }
                     shuttle_view = !shuttle_view;
-                    solar.camera = view(shuttle_view).camera();
                 }
             }
             Event::AboutToWait => {
                 let time = start_time.elapsed().as_secs_f64();
-                let dt   = time - last_wall_time;
+                // Capped so a stall (window drag, first frame) doesn't fling the ship.
+                let dt   = (time - last_wall_time).min(0.1);
                 last_wall_time = time;
+
+                // Ship and camera each move from their own inputs; the camera inputs steer
+                // whichever view is showing.
+                ship.update(&controls.ship_input(), dt);
+                rig.update(&controls.camera_input(), dt);
                 if orbit_enabled {
-                    orbit_time += dt;
+                    rig.rotate(dt / ORBIT_PERIOD_SECS * TAU, 0.0);
                 }
-                // Both views share the orbit angle, so switching keeps the direction of view.
-                let path = view(shuttle_view);
-                let angle = orbit_time / ORBIT_PERIOD_SECS * TAU;
-                solar.camera.set_position(orbit_position(path.center, path.start, angle));
                 solar.animate(time);
+                solar.set_shuttle_pose(ship.position, ship.orientation);
+                solar.camera = if shuttle_view {
+                    rig.camera(ship.position, &ship.orientation)
+                } else {
+                    // Free mode around a fixed point: the ship's orientation doesn't matter.
+                    rig.camera(scene_solar::SYSTEM_VIEW.center, &nalgebra::UnitQuaternion::identity())
+                };
 
                 let frame = pixels.frame_mut();
                 solar.render(frame);
@@ -363,6 +435,7 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 view_btn.active = true;
                 view_btn.draw(frame, WIDTH, HEIGHT);
                 ui::draw_label(frame, WIDTH, HEIGHT, &scene_solar::date_label(time), 270, 10);
+                ui::draw_label(frame, WIDTH, HEIGHT, HELP, 10, HEIGHT as i32 - 36);
 
                 if let Err(err) = pixels.render() {
                     println!("Render error: {err}");
@@ -375,7 +448,11 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                     let fps = frame_count as f64 / elapsed;
                     let orb = if orbit_enabled { "ON" } else { "OFF" };
                     let v = if shuttle_view { "shuttle" } else { "system" };
-                    window.set_title(&format!("Solar System - {fps:.1} FPS | Orbit: {orb} | View: {v}"));
+                    let cam = match rig.mode { chase_camera::Mode::Free => "free", chase_camera::Mode::Chase => "chase" };
+                    window.set_title(&format!(
+                        "Solar System - {fps:.1} FPS | Orbit: {orb} | View: {v} | Camera: {cam} | Speed: {:.2}",
+                        ship.velocity.norm(),
+                    ));
                     frame_count = 0;
                     fps_timer = Instant::now();
                 }
@@ -385,5 +462,6 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     })?;
     Ok(())
 }
+
 
 
