@@ -241,7 +241,7 @@ fn run_solar(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     // Offline frame save: `--solar --save`
     if args.get(2).map(String::as_str) == Some("--save") {
         let mut solar = scene_solar::SolarScene::new();
-        solar.animate(5.0); // 1/6 Earth orbit: planets are spread and lit
+        solar.animate(5.0); // 5 s into the 1800 s Earth year
         let mut buffer = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
         solar.render(&mut buffer);
         let img = image::RgbaImage::from_raw(WIDTH, HEIGHT, buffer).expect("buffer size");

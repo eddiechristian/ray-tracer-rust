@@ -32,6 +32,8 @@ pub struct Material {
     pub ior: f64,
     /// Optional normal/bump map. When set, perturbs the surface normal before lighting.
     pub normal_map: Option<Box<dyn NormalMap>>,
+    /// Self-lit (e.g. the Sun): the texture colour is returned as-is, ignoring lights.
+    pub emissive: bool,
 }
 
 impl Material {
@@ -44,11 +46,18 @@ impl Material {
             translucency: 0.0,
             ior: 1.0,
             normal_map: None,
+            emissive: false,
         }
     }
 
     pub fn with_normal_map(mut self, map: impl NormalMap + 'static) -> Self {
         self.normal_map = Some(Box::new(map));
+        self
+    }
+
+    /// Makes the surface glow with its texture colour instead of being lit.
+    pub fn with_emissive(mut self) -> Self {
+        self.emissive = true;
         self
     }
 
@@ -77,6 +86,9 @@ impl Material {
     /// Color seen along `ray`, which hit this material at `hit`. `depth` counts bounces so far;
     /// `weight` is how much this color contributes to the final pixel (1.0 for camera rays).
     pub fn compute_color(&self, scene: &dyn SceneContext, ray: &Ray, hit: &IntersectionResult, depth: u32, weight: f64) -> Color {
+        if self.emissive {
+            return self.texture.color(&hit.uv);
+        }
         let normal = match &self.normal_map {
             Some(nm) => nm.perturb(&hit.local_normal, &hit.uv),
             None     => hit.local_normal,
